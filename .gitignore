@@ -34,6 +34,7 @@
 /CPackConfig.cmake
 /CPackSourceConfig.cmake
 /Makefile
+/cmake/distinfo/distinfo.cmake
 /cmake_install.cmake
 /defs.mk
 /generated/
@@ -41,3 +42,5 @@
 /tools/Makefile
 /tools/cmake_install.cmake
 /include/libdcp/visibility.h
+core.*
+/cmake/distinfo/MANIFEST

@@ -1,0 +1,20 @@
+libdcp - DCP client library
+===========================
+
+This code is experimental. It might and will change with every commit.
+Do not even think about using it in production.
+
+USAGE
+-----
+
+    mkdir build
+    cd build
+    cmake .. -DCMAKE_BUILD_TYPE=Debug
+    make
+    
+    ./bin/cbc-recv 127.0.0.1 11210 default Administrator password
+
+
+If you want to see more details:
+
+    export LDCP_LOGLEVEL=5

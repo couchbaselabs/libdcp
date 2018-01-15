@@ -34,6 +34,10 @@
 #    include <netinet/in.h>
 #endif
 
+#ifdef HAVE_NETINET_TCP_H
+#    include <netinet/tcp.h>
+#endif
+
 #ifdef HAVE_INTTYPES_H
 #    include <inttypes.h>
 #endif
@@ -90,6 +94,29 @@
 #    define ldcp_ntohll(a) ldcp_byteswap64(a)
 #    define ldcp_htonll(a) ldcp_byteswap64(a)
 #endif /* HAVE_HTONLL */
+
+typedef struct {
+#ifdef _WIN32
+    ULONG iov_len;
+    void *iov_base;
+#else
+    void *iov_base;
+    size_t iov_len;
+#endif
+} ldcp_IOV;
+
+#ifdef _WIN32
+typedef SOCKET ldcp_SOCKET;
+#else
+typedef int ldcp_SOCKET;
+#endif
+#ifndef INVALID_SOCKET
+#    define INVALID_SOCKET -1
+#endif
+
+#if defined(EWOULDBLOCK) && defined(EAGAIN) && EWOULDBLOCK != EAGAIN
+#    define USE_EAGAIN 1
+#endif
 
 #ifdef __cplusplus
 extern "C" {

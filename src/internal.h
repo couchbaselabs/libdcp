@@ -40,6 +40,9 @@
 #include "assertion.h"
 #include "settings.h"
 #include "logging.h"
+#include "ringbuffer.h"
+#include "protocol_binary.h"
+#include "cJSON/cJSON.h"
 
 /* Internal dependencies */
 LDCP_INTERNAL_API int ldcp_getenv_nonempty(const char *key, char *buf, size_t len);

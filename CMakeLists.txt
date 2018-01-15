@@ -10,7 +10,7 @@ ENDIF("${isSystemDir}" STREQUAL "-1")
 
 SET(LDCP_GENSRCDIR ${PROJECT_BINARY_DIR}/generated)
 INCLUDE_DIRECTORIES(${LDCP_GENSRCDIR})
-SET(LDCP_GENINFODIR ${PROJECT_SOURCE_DIR}/packaging/distinfo)
+SET(LDCP_GENINFODIR ${PROJECT_SOURCE_DIR}/cmake/distinfo)
 
 SET(SOURCE_ROOT ${PROJECT_SOURCE_DIR})
 
@@ -38,7 +38,7 @@ IF(NOT CMAKE_BUILD_TYPE)
     "${PROJECT_SOURCE_DIR}/cmake/Modules/DistScript.cmake")
 ENDIF()
 SET(ldcp_package_name "libdcp-${LDCP_VERSION}_${LDCP_ARCH_STRING}_${LDCP_CC_STRING}")
-SET(CPACK_PACKAGE_FILE_NAME ${lcb_package_name})
+SET(CPACK_PACKAGE_FILE_NAME ${ldcp_package_name})
 
 IF(WIN32)
   SET(CPACK_GENERATOR "ZIP")
@@ -118,14 +118,14 @@ ADD_CUSTOM_TARGET(uninstall
   COMMAND xargs rm -vf < ${CMAKE_CURRENT_BINARY_DIR}/install_manifest.txt)
 
 ADD_CUSTOM_TARGET(file_manifest
-  COMMAND sh -c 'test -e ${_lcb_manifest} || git ls-files > ${_lcb_manifest}'
+  COMMAND sh -c 'test -e ${_ldcp_manifest} || git ls-files > ${_ldcp_manifest}'
   WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 
 ADD_CUSTOM_TARGET(dist
   COMMAND rm -rf "${_ldcp_tarname}"
   COMMAND mkdir "${_ldcp_tarname}"
   COMMAND tar -cf - -C ${PROJECT_SOURCE_DIR} -T ${_ldcp_manifest} | tar xf - -C "${_ldcp_tarname}"
-  COMMAND cp -a "${LDCP_GENINFODIR}" "${_ldcp_tarname}/packaging"
+  COMMAND cp -a "${LDCP_GENINFODIR}" "${_ldcp_tarname}/cmake/"
   COMMAND tar -czf "${_ldcp_tarname}.tar.gz" "${_ldcp_tarname}"
   COMMAND rm -rf "${_ldcp_tarname}"
   DEPENDS file_manifest)

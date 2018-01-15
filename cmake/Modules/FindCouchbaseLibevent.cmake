@@ -1,11 +1,3 @@
-# Locate libevent library
-# This module defines
-#  HAVE_LIBEVENT, if false, do not try to link with libevent
-#  LIBEVENT_LIBRARIES, Library path and libs
-#  LIBEVENT_INCLUDE_DIR, where to find the ICU headers
-#  HAVE_LIBEVENT
-#  HAVE_LIBEVENT2
-
 FIND_PATH(LIBEVENT_INCLUDE_DIR evutil.h
           HINTS
                ENV LIBEVENT_DIR
@@ -19,8 +11,8 @@ FIND_PATH(LIBEVENT_INCLUDE_DIR evutil.h
                /opt/libevent
                /opt)
 
-FIND_LIBRARY(LIBEVENT_LIBRARIES
-             NAMES event_core libevent_core
+FIND_LIBRARY(LIBEVENT_CORE
+             NAMES event_core
              HINTS
                  ENV LIBEVENT_DIR
              PATHS
@@ -31,22 +23,30 @@ FIND_LIBRARY(LIBEVENT_LIBRARIES
                  /opt/csw
                  /opt/libevent
                  /opt)
+IF(NOT LIBEVENT_CORE)
+  MESSAGE(FATAL_ERROR "Failed to locate libevent event_core")
+ENDIF()
 
-INCLUDE(CMakePushCheckState)
-INCLUDE(CheckFunctionExists)
 
-IF (LIBEVENT_LIBRARIES AND LIBEVENT_INCLUDE_DIR)
-  SET(HAVE_LIBEVENT true)
-  MESSAGE(STATUS "Found libevent in ${LIBEVENT_INCLUDE_DIR} : ${LIBEVENT_LIBRARIES}")
-  CMAKE_PUSH_CHECK_STATE()
-  SET(CMAKE_REQUIRED_FLAGS "-I${LIBEVENT_INCLUDE_DIR}")
-  SET(CMAKE_REQUIRED_INCLUDES "event2/event.h")
-  SET(CMAKE_REQUIRED_LIBRARIES ${LIBEVENT_LIBRARIES})
-  CHECK_FUNCTION_EXISTS(event_new HAVE_LIBEVENT2)
-  CMAKE_POP_CHECK_STATE()
+FIND_LIBRARY(LIBEVENT_EXTRA
+             NAMES event_extra
+             HINTS
+                 ENV LIBEVENT_DIR
+             PATHS
+                 ${DEPS_LIB_DIR}
+                 ~/Library/Frameworks
+                 /Library/Frameworks
+                 /opt/local
+                 /opt/csw
+                 /opt/libevent
+                 /opt)
+IF(NOT LIBEVENT_EXTRA)
+  MESSAGE(FATAL_ERROR "Failed to locate libevent event_extra")
+ENDIF()
 
-ELSE (LIBEVENT_LIBRARIES)
-  SET(HAVE_LIBEVENT false)
-ENDIF (LIBEVENT_LIBRARIES AND LIBEVENT_INCLUDE_DIR)
+MESSAGE(STATUS "Found libevent headers in: ${LIBEVENT_INCLUDE_DIR}")
+MESSAGE(STATUS "                     core: ${LIBEVENT_CORE}")
+MESSAGE(STATUS "                    extra: ${LIBEVENT_EXTRA}")
 
-MARK_AS_ADVANCED(HAVE_LIBEVENT LIBEVENT_INCLUDE_DIR LIBEVENT_LIBRARIES)
+SET(LIBEVENT_LIBRARIES "${LIBEVENT_CORE}")
+LIST(APPEND LIBEVENT_LIBRARIES ${LIBEVENT_EXTRA})
