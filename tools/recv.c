@@ -33,7 +33,7 @@ static ldcp_SETTINGS *settings = NULL;
 #    define funlockfile(x) (void)0
 #endif
 
-static void dump_bytes(const char *msg, const void *ptr, size_t len)
+static void dump_bytes(FILE *stream, const char *msg, const void *ptr, size_t len)
 {
 
     int width = 16;
@@ -41,8 +41,8 @@ static void dump_bytes(const char *msg, const void *ptr, size_t len)
     size_t full_rows = len / width;
     size_t remainder = len % width;
 
-    flockfile(stderr);
-    fprintf(stderr,
+    flockfile(stream);
+    fprintf(stream,
             "%s, %d bytes\n"
             "         +-------------------------------------------------+\n"
             "         |  0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f |\n"
@@ -53,62 +53,62 @@ static void dump_bytes(const char *msg, const void *ptr, size_t len)
     while (row < full_rows) {
         int row_start_index = row * width;
         // prefix
-        fprintf(stderr, "\n|%08x|", row_start_index);
+        fprintf(stream, "\n|%08x|", row_start_index);
         int row_end_index = row_start_index + width;
         // hex
         int i = row_start_index;
         while (i < row_end_index) {
-            fprintf(stderr, " %02x", (unsigned int)buf[i++]);
+            fprintf(stream, " %02x", (unsigned int)buf[i++]);
         }
-        fprintf(stderr, " |");
+        fprintf(stream, " |");
         // ascii
         i = row_start_index;
         while (i < row_end_index) {
             char b = buf[i++];
             if ((b <= 0x1f) || (b >= 0x7f)) {
-                fprintf(stderr, ".");
+                fprintf(stream, ".");
             } else {
-                fprintf(stderr, "%c", b);
+                fprintf(stream, "%c", b);
             }
         }
-        fprintf(stderr, "|");
+        fprintf(stream, "|");
         row++;
     }
     if (remainder != 0) {
         int row_start_index = full_rows * width;
         // prefix
-        fprintf(stderr, "\n|%08x|", row_start_index);
+        fprintf(stream, "\n|%08x|", row_start_index);
         int row_end_index = row_start_index + remainder;
         // hex
         int i = row_start_index;
         while (i < row_end_index) {
-            fprintf(stderr, " %02x", (unsigned int)buf[i++]);
+            fprintf(stream, " %02x", (unsigned int)buf[i++]);
         }
         i = width - remainder;
         while (i > 0) {
-            fprintf(stderr, "   ");
+            fprintf(stream, "   ");
             i--;
         }
-        fprintf(stderr, " |");
+        fprintf(stream, " |");
         // ascii
         i = row_start_index;
         while (i < row_end_index) {
             char b = buf[i++];
             if ((b <= 0x1f) || (b >= 0x7f)) {
-                fprintf(stderr, ".");
+                fprintf(stream, ".");
             } else {
-                fprintf(stderr, "%c", b);
+                fprintf(stream, "%c", b);
             }
         }
         i = width - remainder;
         while (i > 0) {
-            fprintf(stderr, " ");
+            fprintf(stream, " ");
             i--;
         }
-        fprintf(stderr, "|");
+        fprintf(stream, "|");
     }
-    fprintf(stderr, "\n+--------+-------------------------------------------------+----------------+\n");
-    funlockfile(stderr);
+    fprintf(stream, "\n+--------+-------------------------------------------------+----------------+\n");
+    funlockfile(stream);
 }
 
 struct ldcp_ADDRINFO;
@@ -619,6 +619,7 @@ static void send_hello(ldcp_CHANNEL *chan)
     }
     features[nfeatures++] = PROTOCOL_BINARY_FEATURE_XATTR;
     features[nfeatures++] = PROTOCOL_BINARY_FEATURE_SELECT_BUCKET;
+    features[nfeatures++] = PROTOCOL_BINARY_FEATURE_SNAPPY;
     features[nfeatures++] = PROTOCOL_BINARY_FEATURE_DUPLEX;
     features[nfeatures++] = PROTOCOL_BINARY_FEATURE_CLUSTERMAP_CHANGE_NOTIFICATION;
 
@@ -1003,6 +1004,7 @@ static void read_dcp_mutation(ldcp_CHANNEL *chan, protocol_binary_response_heade
     int16_t partition = (int16_t)ntohs(hdr->response.status);
     uint16_t keylen = ntohs(hdr->response.keylen);
     uint8_t extlen = hdr->response.extlen;
+    uint8_t datatype = hdr->response.datatype;
     uint64_t cas = ldcp_ntohll(hdr->response.cas);
     uint64_t by_seqno, rev_seqno;
     uint32_t flags, expiration, lock_time;
@@ -1038,15 +1040,19 @@ static void read_dcp_mutation(ldcp_CHANNEL *chan, protocol_binary_response_heade
 
     char *key = body;
     fprintf(stderr,
-            "MUTATION \"%.*s\", part=%" PRId16 ", cas=0x%016" PRIx64 ", flags=0x%08" PRIx32 ", expiration=%" PRIu32
-            ", lock_time=%" PRIu32 ", by_seqno=0x%016" PRIx64 ", rev_seqno=%" PRIu64 "\n",
-            (int)keylen, key, partition, cas, flags, expiration, lock_time, by_seqno, rev_seqno);
+            "MUTATION \"%.*s\", part=%" PRId16 ", cas=0x%016" PRIx64 ", datatype=0x%02" PRIx8 ", flags=0x%08" PRIx32
+            ", expiration=%" PRIu32 ", lock_time=%" PRIu32 ", by_seqno=0x%016" PRIx64 ", rev_seqno=%" PRIu64 "\n",
+            (int)keylen, key, partition, cas, datatype, flags, expiration, lock_time, by_seqno, rev_seqno);
 
     char *val = body + keylen;
     uint32_t vallen = ntohl(hdr->response.bodylen) - keylen - extlen;
-    fwrite(val, vallen, sizeof(char), stdout);
-    fwrite("\n", 1, sizeof(char), stdout);
-    fflush(stdout);
+    if (datatype & PROTOCOL_BINARY_DATATYPE_COMPRESSED) {
+        dump_bytes(stdout, "snappy compressed", val, vallen);
+    } else {
+        fwrite(val, vallen, sizeof(char), stdout);
+        fwrite("\n", 1, sizeof(char), stdout);
+        fflush(stdout);
+    }
 }
 
 static void read_dcp_deletion(ldcp_CHANNEL *chan, protocol_binary_response_header *hdr, void *body, uint32_t nbody)
@@ -1310,9 +1316,9 @@ static void handle_read(ldcp_CHANNEL *chan)
                         }
                         break;
                     default:
-                        dump_bytes("RES (0x81) header", &hdr, sizeof(hdr));
+                        dump_bytes(stderr, "RES (0x81) header", &hdr, sizeof(hdr));
                         if (nbody) {
-                            dump_bytes("RES (0x81) body", body, nbody);
+                            dump_bytes(stderr, "RES (0x81) body", body, nbody);
                         }
                         break;
                 }
@@ -1343,9 +1349,9 @@ static void handle_read(ldcp_CHANNEL *chan)
                         ldcp_channel_ack(chan, nbody + sizeof(hdr));
                         /* fall-through */
                     default:
-                        dump_bytes("REQ (0x80) header", &hdr, sizeof(hdr));
+                        dump_bytes(stderr, "REQ (0x80) header", &hdr, sizeof(hdr));
                         if (nbody) {
-                            dump_bytes("REQ (0x80) body", body, nbody);
+                            dump_bytes(stderr, "REQ (0x80) body", body, nbody);
                         }
                         break;
                 }
@@ -1356,9 +1362,9 @@ static void handle_read(ldcp_CHANNEL *chan)
                         read_and_upgrade_config(chan, &hdr, body, nbody);
                         break;
                     default:
-                        dump_bytes("SREQ (0x82) header", &hdr, sizeof(hdr));
+                        dump_bytes(stderr, "SREQ (0x82) header", &hdr, sizeof(hdr));
                         if (nbody) {
-                            dump_bytes("SREQ (0x82) body", body, nbody);
+                            dump_bytes(stderr, "SREQ (0x82) body", body, nbody);
                         }
                         break;
                 }
