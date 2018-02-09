@@ -59,6 +59,9 @@ LDCP_INTERNAL_API
 ldcp_CONFIG *ldcp_config_parse(const char *body, const char *this_host);
 
 LDCP_INTERNAL_API
+void ldcp_config_map_key(ldcp_CONFIG *config, const char *ky, size_t nkey, int *index, int16_t *partition);
+
+LDCP_INTERNAL_API
 void ldcp_handle_rebalance(struct ldcp_CLIENT *client, ldcp_CONFIG *config);
 
 #ifdef __cplusplus

@@ -107,7 +107,7 @@ int main(int argc, char *argv[])
         password = argv[5];
     }
 
-    client = ldcp_client_new(settings, host, port, bucket, user, password);
+    client = ldcp_client_new(settings, TYPE_PRODUCER, host, port, bucket, user, password);
     ldcp_client_bootstrap(client);
     ldcp_client_dispatch(client);
 

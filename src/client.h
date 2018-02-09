@@ -24,12 +24,17 @@
 extern "C" {
 #endif /* __cplusplus */
 
+typedef enum { TYPE_CONSUMER = 0x00, TYPE_PRODUCER = 0x01, TYPE_NOTIFIER = 0x02 } ldcp_CLIENT_TYPE;
+
 typedef struct ldcp_CLIENT {
     ldcp_SETTINGS *settings;
     ldcp_IO *io;
     ldcp_SESSION *session;
     ldcp_CHANNEL **channels;
     int nchannels;
+    int config_rev;
+    ldcp_CONFIG *config;
+    ldcp_CLIENT_TYPE type;
     char *username;
     char *password;
     char *bucket;
@@ -37,12 +42,11 @@ typedef struct ldcp_CLIENT {
     /* bootstrap address */
     char host[NI_MAXHOST + 1];
     char port[NI_MAXSERV + 1];
-    int config_rev;
 } ldcp_CLIENT;
 
 LDCP_INTERNAL_API
-ldcp_CLIENT *ldcp_client_new(ldcp_SETTINGS *settings, const char *host, const char *port, const char *bucket,
-                             const char *username, const char *password);
+ldcp_CLIENT *ldcp_client_new(ldcp_SETTINGS *settings, ldcp_CLIENT_TYPE type, const char *host, const char *port,
+                             const char *bucket, const char *username, const char *password);
 
 LDCP_INTERNAL_API
 void ldcp_client_dispatch(ldcp_CLIENT *client);

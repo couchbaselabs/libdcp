@@ -20,11 +20,12 @@
 #include <event2/event.h>
 
 LDCP_INTERNAL_API
-ldcp_CLIENT *ldcp_client_new(ldcp_SETTINGS *settings, const char *host, const char *port, const char *bucket,
-                             const char *username, const char *password)
+ldcp_CLIENT *ldcp_client_new(ldcp_SETTINGS *settings, ldcp_CLIENT_TYPE type, const char *host, const char *port,
+                             const char *bucket, const char *username, const char *password)
 {
     ldcp_CLIENT *client = calloc(1, sizeof(ldcp_CLIENT));
     client->settings = settings;
+    client->type = type;
     strncpy(client->host, host, sizeof(client->host));
     strncpy(client->port, port, sizeof(client->port));
     client->username = strdup(username);

@@ -890,7 +890,6 @@ typedef union {
  */
 typedef protocol_binary_response_no_extras protocol_binary_response_observe_seqno;
 
-
 /**
  * @}
  */
@@ -987,12 +986,28 @@ typedef union {
     struct {
         protocol_binary_request_header header;
         struct {
+            uint32_t flags;
+        } body;
+    } message;
+    uint8_t bytes[sizeof(protocol_binary_request_header) + 4];
+} protocol_binary_request_dcp_add_stream;
+
+typedef union {
+    struct {
+        protocol_binary_request_header header;
+        struct {
             uint32_t buffer_bytes;
         } body;
     } message;
     uint8_t bytes[sizeof(protocol_binary_request_header) + 4];
 } protocol_binary_request_dcp_buffer_acknowledgement;
 
+typedef union {
+    struct {
+        protocol_binary_request_header header;
+        struct {
+            uint64_t start_seqno;
+            uint64_t end_seqno;
 /**
  * Specifies that the snapshot contains in-memory items only.
  */
@@ -1000,15 +1015,37 @@ typedef union {
 /**
  * Specifies that the snapshot contains on-disk items only.
  */
-#define DCP_SNAPSHOT_MARKER_DISK   0x02
+#define DCP_SNAPSHOT_MARKER_DISK 0x02
 /**
  * An internally used flag for intra-cluster replication to help to keep in-memory datastructures look similar.
  */
-#define DCP_SNAPSHOT_MARKER_CHK    0x04
+#define DCP_SNAPSHOT_MARKER_CHK 0x04
 /**
  * Specifies that this snapshot marker should return a response once the entire snapshot is received.
  */
-#define DCP_SNAPSHOT_MARKER_ACK    0x08
+#define DCP_SNAPSHOT_MARKER_ACK 0x08
+            uint32_t flags;
+        } body;
+    } message;
+    uint8_t bytes[sizeof(protocol_binary_request_header) + 20];
+} protocol_binary_request_dcp_snapshot_marker;
+
+typedef union {
+    struct {
+        protocol_binary_request_header header;
+        struct {
+            uint64_t by_seqno;
+            uint64_t rev_seqno;
+            uint32_t flags;
+            uint32_t expiration;
+            uint32_t lock_time;
+            uint16_t nmeta;
+            uint8_t nru;
+            uint8_t collection_len;
+        } body;
+    } message;
+    uint8_t bytes[sizeof(protocol_binary_request_header) + 32];
+} protocol_binary_request_dcp_mutation;
 
 #ifdef __cplusplus
 }

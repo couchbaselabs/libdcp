@@ -16,6 +16,7 @@
  */
 
 #include "internal.h"
+#include "crc32-inl.h"
 
 #define LOGARGS(client, lvl) client->settings, "topo", LDCP_LOG_##lvl, __FILE__, __LINE__
 
@@ -119,7 +120,8 @@ void ldcp_handle_rebalance(ldcp_CLIENT *client, ldcp_CONFIG *config)
 {
 
     if (config->rev <= client->config_rev) {
-        ldcp_log(LOGARGS(client, DEBUG), "Skip new configuration rev. %d (active rev. %d)", config->rev, client->config_rev);
+        ldcp_log(LOGARGS(client, DEBUG), "Skip new configuration rev. %d (active rev. %d)", config->rev,
+                 client->config_rev);
         return;
     }
     client->config_rev = config->rev;
@@ -163,4 +165,12 @@ void ldcp_handle_rebalance(ldcp_CLIENT *client, ldcp_CONFIG *config)
     free(client->channels);
     client->channels = new;
     client->nchannels = config->nservers;
+    client->config = config;
+}
+
+LDCP_INTERNAL_API
+void ldcp_config_map_key(ldcp_CONFIG *config, const char *key, size_t nkey, int *index, int16_t *partition)
+{
+    *partition = hash_crc32(key, nkey) % config->npartitions;
+    *index = config->partitions[*partition].master;
 }
