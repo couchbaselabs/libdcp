@@ -115,6 +115,10 @@ LDCP_INTERNAL_API struct ldcp_LOGGER *ldcp_init_console_logger(void);
 #define LDCP_LOG_EX(settings, subsys, severity, msg) ldcp_log(settings, subsys, severity, __FILE__, __LINE__, msg)
 #define LDCP_LOG_BASIC(settings, msg) ldcp_log(settings, "unknown", 0, __FILE__, __LINE__, msg)
 
+
+LDCP_INTERNAL_API
+void ldcp_dump_bytes(FILE *stream, const char *msg, const void *ptr, size_t len);
+
 #ifdef __cplusplus
 }
 #    endif /* __cplusplus */

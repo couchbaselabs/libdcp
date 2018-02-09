@@ -197,3 +197,82 @@ struct ldcp_LOGGER *ldcp_init_console_logger(void)
     console_logger.minlevel = lvl;
     return ldcp_console_logger;
 }
+
+LDCP_INTERNAL_API
+void ldcp_dump_bytes(FILE *stream, const char *msg, const void *ptr, size_t len)
+{
+
+    int width = 16;
+    const unsigned char *buf = (const unsigned char *)ptr;
+    size_t full_rows = len / width;
+    size_t remainder = len % width;
+
+    flockfile(stream);
+    fprintf(stream,
+            "%s, %d bytes\n"
+            "         +-------------------------------------------------+\n"
+            "         |  0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f |\n"
+            "+--------+-------------------------------------------------+----------------+",
+            msg, len);
+
+    unsigned int row = 0;
+    while (row < full_rows) {
+        int row_start_index = row * width;
+        // prefix
+        fprintf(stream, "\n|%08x|", row_start_index);
+        int row_end_index = row_start_index + width;
+        // hex
+        int i = row_start_index;
+        while (i < row_end_index) {
+            fprintf(stream, " %02x", (unsigned int)buf[i++]);
+        }
+        fprintf(stream, " |");
+        // ascii
+        i = row_start_index;
+        while (i < row_end_index) {
+            char b = buf[i++];
+            if ((b <= 0x1f) || (b >= 0x7f)) {
+                fprintf(stream, ".");
+            } else {
+                fprintf(stream, "%c", b);
+            }
+        }
+        fprintf(stream, "|");
+        row++;
+    }
+    if (remainder != 0) {
+        int row_start_index = full_rows * width;
+        // prefix
+        fprintf(stream, "\n|%08x|", row_start_index);
+        int row_end_index = row_start_index + remainder;
+        // hex
+        int i = row_start_index;
+        while (i < row_end_index) {
+            fprintf(stream, " %02x", (unsigned int)buf[i++]);
+        }
+        i = width - remainder;
+        while (i > 0) {
+            fprintf(stream, "   ");
+            i--;
+        }
+        fprintf(stream, " |");
+        // ascii
+        i = row_start_index;
+        while (i < row_end_index) {
+            char b = buf[i++];
+            if ((b <= 0x1f) || (b >= 0x7f)) {
+                fprintf(stream, ".");
+            } else {
+                fprintf(stream, "%c", b);
+            }
+        }
+        i = width - remainder;
+        while (i > 0) {
+            fprintf(stream, " ");
+            i--;
+        }
+        fprintf(stream, "|");
+    }
+    fprintf(stream, "\n+--------+-------------------------------------------------+----------------+\n");
+    funlockfile(stream);
+}

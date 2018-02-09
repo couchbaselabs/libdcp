@@ -44,6 +44,12 @@
 #include "protocol_binary.h"
 #include "cJSON/cJSON.h"
 
+#include "io.h"
+#include "session.h"
+#include "topo.h"
+#include "channel.h"
+#include "client.h"
+
 /* Internal dependencies */
 LDCP_INTERNAL_API int ldcp_getenv_nonempty(const char *key, char *buf, size_t len);
 LDCP_INTERNAL_API int ldcp_getenv_boolean(const char *key);
