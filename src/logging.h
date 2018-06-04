@@ -40,13 +40,13 @@ extern "C" {
 
 /** @brief Logging Levels */
 typedef enum {
-    LDCP_LOG_TRACE = 0,
-    LDCP_LOG_DEBUG,
-    LDCP_LOG_INFO,
-    LDCP_LOG_WARN,
+    LDCP_LOG_FATAL = 0,
     LDCP_LOG_ERROR,
-    LDCP_LOG_FATAL,
-    LDCP_LOG_MAX
+    LDCP_LOG_WARN,
+    LDCP_LOG_INFO,
+    LDCP_LOG_DEBUG,
+    LDCP_LOG_TRACE,
+    LDCP_LOG__MAX
 } ldcp_LOG_SEVERITY;
 
 struct ldcp_LOGGER;
@@ -80,6 +80,7 @@ struct ldcp_LOGGER {
     union {
         struct {
             ldcp_LOG_CALLBACK callback;
+            ldcp_STATUS (*set_minlevel)(struct ldcp_LOGGER *logger, ldcp_LOG_SEVERITY level);
         } v0;
     } v;
 };
@@ -109,12 +110,12 @@ void ldcp_log(const ldcp_SETTINGS *settings, const char *subsys, int severity, c
 #endif
     ;
 
+LDCP_INTERNAL_API ldcp_STATUS ldcp_log_minlevel(const ldcp_SETTINGS *settings, ldcp_LOG_SEVERITY level);
 LDCP_INTERNAL_API struct ldcp_LOGGER *ldcp_init_console_logger(void);
 
 #define LDCP_LOGS(settings, subsys, severity, msg) ldcp_log(settings, subsys, severity, __FILE__, __LINE__, msg)
 #define LDCP_LOG_EX(settings, subsys, severity, msg) ldcp_log(settings, subsys, severity, __FILE__, __LINE__, msg)
 #define LDCP_LOG_BASIC(settings, msg) ldcp_log(settings, "unknown", 0, __FILE__, __LINE__, msg)
-
 
 LDCP_INTERNAL_API
 void ldcp_dump_bytes(FILE *stream, const char *msg, const void *ptr, size_t len);

@@ -469,7 +469,6 @@ void ldcp_channel_start_stream(ldcp_CHANNEL *chan, int16_t partition)
     ldcp_rb_write(&chan->out, frame.bytes, sizeof(frame.bytes));
 }
 
-
 static void send_add_streams(ldcp_CHANNEL *chan)
 {
     ldcp_CONFIG *config = chan->config;
@@ -520,130 +519,103 @@ static void send_noop(ldcp_CHANNEL *chan, uint32_t opaque)
 static void read_dcp_snapshot_marker(ldcp_CHANNEL *chan, protocol_binary_response_header *hdr, void *body,
                                      uint32_t nbody)
 {
-    int16_t partition = (int16_t)ntohs(hdr->response.status);
-    uint64_t start_seqno, end_seqno;
-    uint32_t flags;
-    char list[100] = {0};
-    int off = 0;
-
     if (nbody != 20) {
         return;
     }
 
-    memcpy(&start_seqno, body, sizeof(uint64_t));
-    start_seqno = ldcp_ntohll(start_seqno);
+    ldcp_SNAPSHOT evt = {.version = 0};
+    evt.partition = ntohs(hdr->response.status);
+
+    memcpy(&evt.start_seqno, body, sizeof(uint64_t));
+    evt.start_seqno = ldcp_ntohll(evt.start_seqno);
     body += sizeof(uint64_t);
 
-    memcpy(&end_seqno, body, sizeof(uint64_t));
-    end_seqno = ldcp_ntohll(end_seqno);
+    memcpy(&evt.end_seqno, body, sizeof(uint64_t));
+    evt.end_seqno = ldcp_ntohll(evt.end_seqno);
     body += sizeof(uint64_t);
 
-    memcpy(&flags, body, sizeof(uint32_t));
-    flags = ntohl(flags);
+    memcpy(&evt.flags, body, sizeof(uint32_t));
+    evt.flags = ntohl(evt.flags);
 
-    if (flags & DCP_SNAPSHOT_MARKER_MEMORY) {
-        off += snprintf(list + off, sizeof(list) - off, "%sMEMORY(0x%02x)", off ? "," : "", DCP_SNAPSHOT_MARKER_MEMORY);
-    }
-    if (flags & DCP_SNAPSHOT_MARKER_DISK) {
-        off += snprintf(list + off, sizeof(list) - off, "%sDISK(0x%02x)", off ? "," : "", DCP_SNAPSHOT_MARKER_DISK);
-    }
-    if (flags & DCP_SNAPSHOT_MARKER_CHK) {
-        off += snprintf(list + off, sizeof(list) - off, "%sCHK(0x%02x)", off ? "," : "", DCP_SNAPSHOT_MARKER_CHK);
-    }
-    if (flags & DCP_SNAPSHOT_MARKER_ACK) {
-        off += snprintf(list + off, sizeof(list) - off, "%sACK(0x%02x)", off ? "," : "", DCP_SNAPSHOT_MARKER_ACK);
+    if (evt.flags & DCP_SNAPSHOT_MARKER_ACK) {
         send_snapshot_marker_response(chan, hdr->response.opaque);
     }
-    ldcp_log(LOGARGS(chan, TRACE), "SNAPSHOT [0x%016" PRIx64 ", 0x%016" PRIx64 "], part=%d, flags=%s, fd=%d",
-             start_seqno, end_seqno, partition, off ? list : "(none)", chan->fd);
+
+    chan->client->callbacks[LDCP_CALLBACK_SNAPSHOT](chan->client, LDCP_CALLBACK_SNAPSHOT, (ldcp_EVENT *)&evt);
 }
 
 static void read_dcp_mutation(ldcp_CHANNEL *chan, protocol_binary_response_header *hdr, void *body, uint32_t nbody)
 {
-    int16_t partition = (int16_t)ntohs(hdr->response.status);
-    uint16_t keylen = ntohs(hdr->response.keylen);
+    ldcp_MUTATION evt = {.version = 0};
     uint8_t extlen = hdr->response.extlen;
-    uint8_t datatype = hdr->response.datatype;
-    uint64_t cas = ldcp_ntohll(hdr->response.cas);
-    uint64_t by_seqno, rev_seqno;
-    uint32_t flags, expiration, lock_time;
-    char list[100] = {0};
-    int off = 0;
 
-    if (extlen != 31 || extlen + keylen > nbody) {
+    evt.key_len = ntohs(hdr->response.keylen);
+
+    if (extlen != 31 || extlen + evt.key_len > nbody) {
         return;
     }
 
-    memcpy(&by_seqno, body, sizeof(uint64_t));
-    by_seqno = ldcp_ntohll(by_seqno);
+    evt.partition = ntohs(hdr->response.status);
+    evt.cas = ldcp_ntohll(hdr->response.cas);
+    evt.datatype = hdr->response.datatype;
+
+    memcpy(&evt.by_seqno, body, sizeof(evt.by_seqno));
+    evt.by_seqno = ldcp_ntohll(evt.by_seqno);
     body += sizeof(uint64_t);
 
-    memcpy(&rev_seqno, body, sizeof(uint64_t));
-    rev_seqno = ldcp_ntohll(rev_seqno);
+    memcpy(&evt.rev_seqno, body, sizeof(evt.rev_seqno));
+    evt.rev_seqno = ldcp_ntohll(evt.rev_seqno);
     body += sizeof(uint64_t);
 
-    memcpy(&flags, body, sizeof(flags));
-    flags = ntohl(flags);
+    memcpy(&evt.flags, body, sizeof(evt.flags));
+    evt.flags = ntohl(evt.flags);
     body += sizeof(uint32_t);
 
-    memcpy(&expiration, body, sizeof(expiration));
-    expiration = ntohl(expiration);
+    memcpy(&evt.expiration, body, sizeof(evt.expiration));
+    evt.expiration = ntohl(evt.expiration);
     body += sizeof(uint32_t);
 
-    memcpy(&lock_time, body, sizeof(lock_time));
-    lock_time = ntohl(lock_time);
+    memcpy(&evt.lock_time, body, sizeof(evt.lock_time));
+    evt.lock_time = ntohl(evt.lock_time);
     body += sizeof(uint32_t);
 
     body += sizeof(uint16_t); // nmeta
     body += sizeof(uint8_t);  // nru
 
-    char *key = body;
-    fprintf(stderr,
-            "MUTATION \"%.*s\", part=%" PRId16 ", cas=0x%016" PRIx64 ", datatype=0x%02" PRIx8 ", flags=0x%08" PRIx32
-            ", expiration=%" PRIu32 ", lock_time=%" PRIu32 ", by_seqno=0x%016" PRIx64 ", rev_seqno=%" PRIu64 "\n",
-            (int)keylen, key, partition, cas, datatype, flags, expiration, lock_time, by_seqno, rev_seqno);
+    evt.key = body;
+    evt.value = body + evt.key_len;
+    evt.value_len = ntohl(hdr->response.bodylen) - evt.key_len - extlen;
 
-    char *val = body + keylen;
-    uint32_t vallen = ntohl(hdr->response.bodylen) - keylen - extlen;
-    if (datatype & PROTOCOL_BINARY_DATATYPE_COMPRESSED) {
-        ldcp_dump_bytes(stdout, "snappy compressed", val, vallen);
-    } else {
-        fwrite(val, vallen, sizeof(char), stdout);
-        fwrite("\n", 1, sizeof(char), stdout);
-        fflush(stdout);
-    }
+    chan->client->callbacks[LDCP_CALLBACK_MUTATION](chan->client, LDCP_CALLBACK_MUTATION, (ldcp_EVENT *)&evt);
 }
 
 static void read_dcp_deletion(ldcp_CHANNEL *chan, protocol_binary_response_header *hdr, void *body, uint32_t nbody)
 {
-    int16_t partition = (int16_t)ntohs(hdr->response.status);
-    uint16_t keylen = ntohs(hdr->response.keylen);
+    ldcp_DELETION evt = {.version = 0};
     uint8_t extlen = hdr->response.extlen;
-    uint32_t vallen = ntohl(hdr->response.bodylen) - keylen - extlen;
-    uint64_t cas = ldcp_ntohll(hdr->response.cas);
-    uint64_t by_seqno, rev_seqno;
-    char list[100] = {0};
-    int off = 0;
 
-    if (extlen != 18 || extlen + keylen > nbody) {
+    evt.key_len = ntohs(hdr->response.keylen);
+
+    if (extlen != 18 || extlen + evt.key_len > nbody) {
         return;
     }
 
-    memcpy(&by_seqno, body, sizeof(uint64_t));
-    by_seqno = ldcp_ntohll(by_seqno);
+    evt.partition = ntohs(hdr->response.status);
+    evt.cas = ldcp_ntohll(hdr->response.cas);
+
+    memcpy(&evt.by_seqno, body, sizeof(uint64_t));
+    evt.by_seqno = ldcp_ntohll(evt.by_seqno);
     body += sizeof(uint64_t);
 
-    memcpy(&rev_seqno, body, sizeof(uint64_t));
-    rev_seqno = ldcp_ntohll(rev_seqno);
+    memcpy(&evt.rev_seqno, body, sizeof(uint64_t));
+    evt.rev_seqno = ldcp_ntohll(evt.rev_seqno);
     body += sizeof(uint64_t);
 
     body += sizeof(uint16_t); // nmeta
 
-    char *key = body;
-    fprintf(stderr,
-            "DELETION \"%.*s\", part=%" PRId16 ", cas=0x%016" PRIx64 ", by_seqno=0x%016" PRIx64 ", rev_seqno=%" PRIu64
-            "\n",
-            (int)keylen, key, partition, cas, by_seqno, rev_seqno);
+    evt.key = body;
+
+    chan->client->callbacks[LDCP_CALLBACK_DELETION](chan->client, LDCP_CALLBACK_DELETION, (ldcp_EVENT *)&evt);
 }
 
 #define STREAM_CLOSED_STATUSES(X)                                                                                      \
@@ -798,7 +770,7 @@ void ldcp_channel_handle_read(ldcp_CHANNEL *chan)
                     case PROTOCOL_BINARY_CMD_DCP_OPEN:
                         switch (status) {
                             case PROTOCOL_BINARY_RESPONSE_SUCCESS:
-                                if (chan->client->type >= TYPE_PRODUCER) {
+                                if (chan->client->type >= LDCP_TYPE_PRODUCER) {
                                     send_dcp_control(chan);
                                 } else {
                                     send_add_streams(chan);

@@ -185,29 +185,37 @@ int main(int argc, char *argv[])
     setup_sigint_handler();
     setup_sigquit_handler();
 
-    const char *host = "127.0.0.1";
-    const char *port = "11210";
-    const char *bucket = "default";
-    const char *user = "Administrator";
-    const char *password = "password";
+    ldcp_OPTIONS *options = ldcp_options_new();
+    options->settings = settings;
+    options->type = LDCP_TYPE_PRODUCER;
+    options->host = "127.0.0.1";
+    options->port = "11210";
+    options->bucket = "default";
+    options->username = "Administrator";
+    options->password = "password";
 
     if (argc > 1) {
-        host = argv[1];
+        options->host = argv[1];
     }
     if (argc > 2) {
-        port = argv[2];
+        options->port = argv[2];
     }
     if (argc > 3) {
-        bucket = argv[3];
+        options->bucket = argv[3];
     }
     if (argc > 4) {
-        user = argv[4];
+        options->username = argv[4];
     }
     if (argc > 5) {
-        password = argv[5];
+        options->password = argv[5];
     }
 
-    client = ldcp_client_new(settings, TYPE_CONSUMER, host, port, bucket, user, password);
+    ldcp_STATUS status;
+    status = ldcp_client_new(options, &client);
+    if (status != LDCP_OK) {
+        ldcp_log(LOGARGS(ERROR), "Failed to initialize DCP client. status=%d", status);
+        exit(EXIT_FAILURE);
+    }
     ldcp_client_bootstrap(client);
 
     ldcp_RINGBUFFER rb;

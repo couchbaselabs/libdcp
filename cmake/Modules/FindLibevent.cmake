@@ -7,7 +7,6 @@ FIND_PATH(LIBEVENT_INCLUDE_DIR evutil.h
                ~/Library/Frameworks
                /Library/Frameworks
                /opt/local
-               /opt/csw
                /opt/libevent
                /opt)
 
@@ -20,7 +19,6 @@ FIND_LIBRARY(LIBEVENT_CORE
                  ~/Library/Frameworks
                  /Library/Frameworks
                  /opt/local
-                 /opt/csw
                  /opt/libevent
                  /opt)
 IF(NOT LIBEVENT_CORE)
@@ -37,7 +35,6 @@ FIND_LIBRARY(LIBEVENT_EXTRA
                  ~/Library/Frameworks
                  /Library/Frameworks
                  /opt/local
-                 /opt/csw
                  /opt/libevent
                  /opt)
 IF(NOT LIBEVENT_EXTRA)

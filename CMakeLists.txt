@@ -15,7 +15,7 @@ SET(LDCP_GENINFODIR ${PROJECT_SOURCE_DIR}/cmake/distinfo)
 SET(SOURCE_ROOT ${PROJECT_SOURCE_DIR})
 
 INCLUDE(cmake/Modules/GetLibcouchbaseFlags.cmake)
-INCLUDE(cmake/Modules/FindCouchbaseLibevent.cmake)
+INCLUDE(cmake/Modules/FindLibevent.cmake)
 INCLUDE(cmake/Modules/GetPlatformCCInfo.cmake)
 INCLUDE(cmake/Modules/GetVersionInfo.cmake)
 INCLUDE(CheckIncludeFiles)

@@ -166,6 +166,9 @@ void ldcp_handle_rebalance(ldcp_CLIENT *client, ldcp_CONFIG *config)
     client->channels = new;
     client->nchannels = config->nservers;
     client->config = config;
+    if (client->on_config) {
+        client->on_config(client);
+    }
 }
 
 LDCP_INTERNAL_API

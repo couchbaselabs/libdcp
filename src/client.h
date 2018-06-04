@@ -24,7 +24,8 @@
 extern "C" {
 #endif /* __cplusplus */
 
-typedef enum { TYPE_CONSUMER = 0x00, TYPE_PRODUCER = 0x01, TYPE_NOTIFIER = 0x02 } ldcp_CLIENT_TYPE;
+typedef void (*ldcp_EVTCALLBACK)(struct ldcp_CLIENT *client, ldcp_CALLBACK type, const ldcp_EVENT *evt);
+typedef void (*ldcp_CFGCALLBACK)(struct ldcp_CLIENT *client);
 
 typedef struct ldcp_CLIENT {
     ldcp_SETTINGS *settings;
@@ -42,23 +43,49 @@ typedef struct ldcp_CLIENT {
     /* bootstrap address */
     char host[NI_MAXHOST + 1];
     char port[NI_MAXSERV + 1];
+    ldcp_CFGCALLBACK on_config;
+    ldcp_EVTCALLBACK callbacks[LDCP_CALLBACK__MAX];
+    void *cookie; /**< user specified opaque cookie */
 } ldcp_CLIENT;
 
-LDCP_INTERNAL_API
-ldcp_CLIENT *ldcp_client_new(ldcp_SETTINGS *settings, ldcp_CLIENT_TYPE type, const char *host, const char *port,
-                             const char *bucket, const char *username, const char *password);
+typedef struct ldcp_OPTIONS {
+    uint32_t version;
+    ldcp_SETTINGS *settings;
+    ldcp_CLIENT_TYPE type;
+    const char *host;
+    const char *port;
+    const char *bucket;
+    const char *username;
+    const char *password;
+    void *cookie;
+} ldcp_OPTIONS;
+
+ldcp_OPTIONS *ldcp_options_new();
+ldcp_STATUS ldcp_options_free(ldcp_OPTIONS *options);
 
 LDCP_INTERNAL_API
-void ldcp_client_dispatch(ldcp_CLIENT *client);
+ldcp_STATUS ldcp_client_new(ldcp_OPTIONS *options, ldcp_CLIENT **client);
 
 LDCP_INTERNAL_API
-void ldcp_client_stop(ldcp_CLIENT *client);
+ldcp_STATUS ldcp_client_dispatch(ldcp_CLIENT *client);
 
 LDCP_INTERNAL_API
-void ldcp_client_bootstrap(ldcp_CLIENT *client);
+ldcp_STATUS ldcp_client_stop(ldcp_CLIENT *client);
 
 LDCP_INTERNAL_API
-void ldcp_client_free(ldcp_CLIENT *client);
+ldcp_STATUS ldcp_client_bootstrap(ldcp_CLIENT *client);
+
+LDCP_INTERNAL_API
+ldcp_STATUS ldcp_client_free(ldcp_CLIENT *client);
+
+LDCP_INTERNAL_API
+ldcp_STATUS ldcp_client_number_partitions(ldcp_CLIENT *client, uint32_t *out);
+
+LDCP_INTERNAL_API
+ldcp_EVTCALLBACK ldcp_install_event_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, ldcp_EVTCALLBACK cb);
+
+LDCP_INTERNAL_API
+ldcp_CFGCALLBACK ldcp_install_config_callback(ldcp_CLIENT *client, ldcp_CFGCALLBACK cb);
 
 #ifdef __cplusplus
 }

@@ -19,46 +19,67 @@
 
 #include <event2/event.h>
 
-LDCP_INTERNAL_API
-ldcp_CLIENT *ldcp_client_new(ldcp_SETTINGS *settings, ldcp_CLIENT_TYPE type, const char *host, const char *port,
-                             const char *bucket, const char *username, const char *password)
+static void dummy_event_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldcp_EVENT *evt)
 {
-    ldcp_CLIENT *client = calloc(1, sizeof(ldcp_CLIENT));
-    client->settings = settings;
-    client->type = type;
-    strncpy(client->host, host, sizeof(client->host));
-    strncpy(client->port, port, sizeof(client->port));
-    client->username = strdup(username);
-    client->password = strdup(password);
-    client->bucket = strdup(bucket);
-    client->session = ldcp_session_new(NULL);
-    client->io = ldcp_io_new();
+    (void)client;
+    (void)type;
+    (void)evt;
 }
 
 LDCP_INTERNAL_API
-void ldcp_client_dispatch(ldcp_CLIENT *client)
+ldcp_STATUS ldcp_client_new(ldcp_OPTIONS *options, ldcp_CLIENT **client)
+{
+    if (options->version != 0) {
+        return LDCP_BADARG;
+    }
+
+    ldcp_CLIENT *obj = calloc(1, sizeof(ldcp_CLIENT));
+    obj->settings = options->settings;
+    obj->type = options->type;
+    strncpy(obj->host, options->host, sizeof(obj->host));
+    strncpy(obj->port, options->port, sizeof(obj->port));
+    obj->username = strdup(options->username);
+    obj->password = strdup(options->password);
+    obj->bucket = strdup(options->bucket);
+    obj->session = ldcp_session_new(NULL);
+    obj->io = ldcp_io_new();
+    int cc;
+    for (cc = 0; cc < LDCP_CALLBACK__MAX; cc++) {
+        obj->callbacks[cc] = dummy_event_callback;
+    }
+    obj->on_config = NULL;
+    obj->cookie = options->cookie;
+    *client = obj;
+    return LDCP_OK;
+}
+
+LDCP_INTERNAL_API
+ldcp_STATUS ldcp_client_dispatch(ldcp_CLIENT *client)
 {
     event_base_dispatch(client->io->evbase);
+    return LDCP_OK;
 }
 
 LDCP_INTERNAL_API
-void ldcp_client_stop(ldcp_CLIENT *client)
+ldcp_STATUS ldcp_client_stop(ldcp_CLIENT *client)
 {
     event_base_loopbreak(client->io->evbase);
+    return LDCP_OK;
 }
 
 LDCP_INTERNAL_API
-void ldcp_client_bootstrap(ldcp_CLIENT *client)
+ldcp_STATUS ldcp_client_bootstrap(ldcp_CLIENT *client)
 {
     ldcp_CHANNEL *chan = ldcp_channel_new(client, client->host, client->port);
     client->nchannels = 1;
     client->channels = calloc(client->nchannels, sizeof(ldcp_CHANNEL *));
     client->channels[0] = chan;
     ldcp_channel_start(chan);
+    return LDCP_OK;
 }
 
 LDCP_INTERNAL_API
-void ldcp_client_free(ldcp_CLIENT *client)
+ldcp_STATUS ldcp_client_free(ldcp_CLIENT *client)
 {
     if (client) {
         free(client->username);
@@ -75,4 +96,55 @@ void ldcp_client_free(ldcp_CLIENT *client)
         }
     }
     free(client);
+    return LDCP_OK;
+}
+
+LDCP_INTERNAL_API
+ldcp_CFGCALLBACK ldcp_install_config_callback(ldcp_CLIENT *client, ldcp_CFGCALLBACK cb)
+{
+    ldcp_CFGCALLBACK old = client->on_config;
+    client->on_config = cb;
+    return old;
+}
+
+LDCP_INTERNAL_API
+ldcp_EVTCALLBACK ldcp_install_event_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, ldcp_EVTCALLBACK cb)
+{
+    if (type >= LDCP_CALLBACK__MAX || type < 0) {
+        return NULL;
+    }
+    ldcp_EVTCALLBACK old = client->callbacks[type];
+    if (cb == NULL) {
+        cb = dummy_event_callback;
+    }
+    client->callbacks[type] = cb;
+    if (old == dummy_event_callback) {
+        return NULL;
+    }
+    return old;
+}
+
+LDCP_INTERNAL_API
+ldcp_OPTIONS *ldcp_options_new()
+{
+    ldcp_OPTIONS *obj = calloc(1, sizeof(ldcp_OPTIONS));
+    obj->version = 0;
+    return obj;
+}
+
+LDCP_INTERNAL_API
+ldcp_STATUS ldcp_options_free(ldcp_OPTIONS *options)
+{
+    free(options);
+    return LDCP_OK;
+}
+
+LDCP_INTERNAL_API
+ldcp_STATUS ldcp_client_number_partitions(ldcp_CLIENT *client, uint32_t *out)
+{
+    if (client->config == NULL) {
+        return LDCP_NOCONFIG;
+    }
+    *out = client->config->npartitions;
+    return LDCP_OK;
 }

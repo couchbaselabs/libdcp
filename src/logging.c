@@ -71,10 +71,23 @@ struct ldcp_CONSOLELOGGER {
 static void console_log(struct ldcp_LOGGER *procs, unsigned int iid, const char *subsys, int severity,
                         const char *srcfile, int srcline, const char *fmt, va_list ap);
 
-static struct ldcp_CONSOLELOGGER console_logger = {{0 /* version */, {{console_log} /* v1 */} /*v*/},
-                                                   NULL,
-                                                   /** Minimum severity */
-                                                   LDCP_LOG_INFO};
+static ldcp_STATUS console_minlevel(struct ldcp_LOGGER *procs, ldcp_LOG_SEVERITY level);
+
+// clang-format off
+static struct ldcp_CONSOLELOGGER console_logger = {
+    {
+        0 /* version */,
+        {
+            {
+                console_log,
+                console_minlevel
+            } /* v1 */
+        } /* v */
+    },
+    NULL,
+    LDCP_LOG_INFO /* Minimum severity */
+};
+// clang-format on
 
 struct ldcp_LOGGER *ldcp_console_logger = &console_logger.base;
 
@@ -101,6 +114,15 @@ static const char *level_to_string(int severity)
     }
 }
 
+static ldcp_STATUS console_minlevel(struct ldcp_LOGGER *logger, ldcp_LOG_SEVERITY level)
+{
+    if (logger) {
+        struct ldcp_CONSOLELOGGER *clogger = (struct ldcp_CONSOLELOGGER *)logger;
+        clogger->minlevel = level;
+    }
+    return LDCP_OK;
+}
+
 /**
  * Default logging callback for the verbose logger.
  */
@@ -111,7 +133,7 @@ static void console_log(struct ldcp_LOGGER *procs, unsigned int iid, const char 
     hrtime_t now;
     struct ldcp_CONSOLELOGGER *vprocs = (struct ldcp_CONSOLELOGGER *)procs;
 
-    if (severity < vprocs->minlevel) {
+    if (severity > vprocs->minlevel) {
         return;
     }
 
@@ -161,12 +183,22 @@ void ldcp_log(const ldcp_SETTINGS *settings, const char *subsys, int severity, c
     va_end(ap);
 }
 
+ldcp_STATUS ldcp_log_minlevel(const ldcp_SETTINGS *settings, ldcp_LOG_SEVERITY level)
+{
+    if (!settings->logger) {
+        return LDCP_BADARG;
+    }
+    if (settings->logger->version != 0) {
+        return LDCP_BADARG;
+    }
+    return settings->logger->v.v0.set_minlevel(settings->logger, level);
+}
+
 LDCP_INTERNAL_API
 struct ldcp_LOGGER *ldcp_init_console_logger(void)
 {
     char vbuf[1024];
     char namebuf[PATH_MAX] = {0};
-    int lvl = 0;
     int has_file = 0;
 
     has_file = ldcp_getenv_nonempty("LDCP_LOGFILE", namebuf, sizeof(namebuf));
@@ -179,22 +211,19 @@ struct ldcp_LOGGER *ldcp_init_console_logger(void)
         console_logger.fp = fp;
     }
 
-    if (!ldcp_getenv_nonempty("LDCP_LOGLEVEL", vbuf, sizeof(vbuf))) {
-        return NULL;
+    if (ldcp_getenv_nonempty("LDCP_LOGLEVEL", vbuf, sizeof(vbuf))) {
+        int lvl = 0;
+        if (sscanf(vbuf, "%d", &lvl)) {
+            if (lvl > LDCP_LOG__MAX) {
+                lvl = LDCP_LOG_TRACE;
+            }
+            if (lvl < LDCP_LOG_ERROR) {
+                lvl = LDCP_LOG_ERROR;
+            }
+            console_logger.minlevel = lvl;
+        }
     }
 
-    if (sscanf(vbuf, "%d", &lvl) != 1) {
-        return NULL;
-    }
-
-    if (!lvl) {
-        /** "0" */
-        return NULL;
-    }
-
-    /** The "lowest" level we can expose is WARN, e.g. ERROR-1 */
-    lvl = LDCP_LOG_ERROR - lvl;
-    console_logger.minlevel = lvl;
     return ldcp_console_logger;
 }
 
