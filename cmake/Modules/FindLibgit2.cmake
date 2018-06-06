@@ -21,4 +21,7 @@ FIND_LIBRARY(LIBGIT2
                  /opt)
 IF(NOT LIBGIT2)
   MESSAGE(FATAL_ERROR "Failed to locate libgit2")
+ELSE()
+  MESSAGE(STATUS "Found libgit2 headers: ${LIBGIT2_INCLUDE_DIR}")
+  MESSAGE(STATUS "                  lib: ${LIBGIT2}")
 ENDIF()

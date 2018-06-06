@@ -41,9 +41,9 @@ IF(NOT LIBEVENT_EXTRA)
   MESSAGE(FATAL_ERROR "Failed to locate libevent event_extra")
 ENDIF()
 
-MESSAGE(STATUS "Found libevent headers in: ${LIBEVENT_INCLUDE_DIR}")
-MESSAGE(STATUS "                     core: ${LIBEVENT_CORE}")
-MESSAGE(STATUS "                    extra: ${LIBEVENT_EXTRA}")
+MESSAGE(STATUS "Found libevent headers: ${LIBEVENT_INCLUDE_DIR}")
+MESSAGE(STATUS "                  core: ${LIBEVENT_CORE}")
+MESSAGE(STATUS "                 extra: ${LIBEVENT_EXTRA}")
 
 SET(LIBEVENT_LIBRARIES "${LIBEVENT_CORE}")
 LIST(APPEND LIBEVENT_LIBRARIES ${LIBEVENT_EXTRA})

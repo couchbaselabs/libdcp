@@ -121,6 +121,8 @@ void ldcp_channel_start(ldcp_CHANNEL *chan)
     evdns_getaddrinfo(chan->client->io->evdns_base, chan->host, chan->port, &hints, gai_callback, chan);
 }
 
+static void schedule_write(ldcp_CHANNEL *chan);
+
 static void send_dcp_buffer_ack(ldcp_CHANNEL *chan, uint32_t nbytes)
 {
     protocol_binary_request_dcp_buffer_acknowledgement frame = {0};
@@ -133,6 +135,7 @@ static void send_dcp_buffer_ack(ldcp_CHANNEL *chan, uint32_t nbytes)
     frame.message.body.buffer_bytes = htonl(nbytes);
     ldcp_rb_ensure_capacity(&chan->out, sizeof(frame.bytes));
     ldcp_rb_write(&chan->out, frame.bytes, sizeof(frame.bytes));
+    schedule_write(chan);
 }
 
 LDCP_INTERNAL_API
@@ -210,6 +213,7 @@ static void send_hello(ldcp_CHANNEL *chan)
         }
     }
 
+    schedule_write(chan);
     ldcp_log(LOGARGS(chan, DEBUG), "HELLO \"%s\", features: [%s]", LDCP_HELLO_DEFL_STRING, list);
 }
 
@@ -308,6 +312,7 @@ static void send_auth(ldcp_CHANNEL *chan)
     ldcp_rb_write(&chan->out, chan->client->username, nusername);
     ldcp_rb_write(&chan->out, &sep, 1);
     ldcp_rb_write(&chan->out, chan->client->password, npassword);
+    schedule_write(chan);
 }
 
 static void send_select_bucket(ldcp_CHANNEL *chan)
@@ -324,6 +329,7 @@ static void send_select_bucket(ldcp_CHANNEL *chan)
     ldcp_rb_ensure_capacity(&chan->out, sizeof(hdr) + nbucket);
     ldcp_rb_write(&chan->out, &hdr, sizeof(hdr));
     ldcp_rb_write(&chan->out, chan->client->bucket, nbucket);
+    schedule_write(chan);
 }
 
 static void send_get_config(ldcp_CHANNEL *chan)
@@ -337,6 +343,7 @@ static void send_get_config(ldcp_CHANNEL *chan)
 
     ldcp_rb_ensure_capacity(&chan->out, sizeof(hdr));
     ldcp_rb_write(&chan->out, &hdr, sizeof(hdr));
+    schedule_write(chan);
 }
 
 static void send_dcp_open(ldcp_CHANNEL *chan)
@@ -355,6 +362,7 @@ static void send_dcp_open(ldcp_CHANNEL *chan)
     ldcp_rb_ensure_capacity(&chan->out, sizeof(frame.bytes) + keylen);
     ldcp_rb_write(&chan->out, frame.bytes, sizeof(frame.bytes));
     ldcp_rb_write(&chan->out, chan->client->session->name, keylen);
+    schedule_write(chan);
 }
 
 static void send_dcp_control(ldcp_CHANNEL *chan)
@@ -400,6 +408,7 @@ static void send_dcp_control(ldcp_CHANNEL *chan)
     }
 #undef STRLEN
     chan->state = CHAN_CONTROL0;
+    schedule_write(chan);
 }
 
 static void send_get_failover_logs(ldcp_CHANNEL *chan)
@@ -421,6 +430,7 @@ static void send_get_failover_logs(ldcp_CHANNEL *chan)
             ldcp_rb_write(&chan->out, &hdr, sizeof(hdr));
         }
     }
+    schedule_write(chan);
 }
 
 static int read_failover_log(ldcp_CHANNEL *chan, protocol_binary_response_header *hdr, void *body, uint32_t nbody)
@@ -469,6 +479,7 @@ void ldcp_channel_start_stream(ldcp_CHANNEL *chan, int16_t partition)
     frame.message.body.vbucket_uuid = session->failover_logs[partition].newest->uuid;
     ldcp_rb_ensure_capacity(&chan->out, sizeof(frame.bytes));
     ldcp_rb_write(&chan->out, frame.bytes, sizeof(frame.bytes));
+    schedule_write(chan);
 }
 
 static void send_add_streams(ldcp_CHANNEL *chan)
@@ -492,6 +503,7 @@ static void send_add_streams(ldcp_CHANNEL *chan)
             ldcp_rb_write(&chan->out, frame.bytes, sizeof(frame.bytes));
         }
     }
+    schedule_write(chan);
 }
 
 static void send_snapshot_marker_response(ldcp_CHANNEL *chan, uint32_t opaque)
@@ -504,6 +516,7 @@ static void send_snapshot_marker_response(ldcp_CHANNEL *chan, uint32_t opaque)
     hdr.request.opaque = opaque;
     ldcp_rb_ensure_capacity(&chan->out, sizeof(hdr.bytes));
     ldcp_rb_write(&chan->out, hdr.bytes, sizeof(hdr.bytes));
+    schedule_write(chan);
 }
 
 static void send_noop(ldcp_CHANNEL *chan, uint32_t opaque)
@@ -516,6 +529,7 @@ static void send_noop(ldcp_CHANNEL *chan, uint32_t opaque)
     hdr.request.opaque = opaque;
     ldcp_rb_ensure_capacity(&chan->out, sizeof(hdr.bytes));
     ldcp_rb_write(&chan->out, hdr.bytes, sizeof(hdr.bytes));
+    schedule_write(chan);
 }
 
 static void read_dcp_snapshot_marker(ldcp_CHANNEL *chan, protocol_binary_response_header *hdr, void *body,
@@ -1011,7 +1025,31 @@ DONE:
             event_del(chan->evt);
             close(chan->fd);
             break;
+        default:
+            if (event_pending(chan->evt, EV_READ | EV_WRITE, 0)) {
+                event_del(chan->evt);
+            }
+            short flags = EV_READ | EV_PERSIST;
+            if (ldcp_rb_get_nbytes(&chan->out)) {
+                flags |= EV_WRITE;
+            }
+            event_assign(chan->evt, chan->client->io->evbase, chan->fd, flags, channel_callback, chan);
+            event_add(chan->evt, NULL);
+            break;
     }
+}
+
+static void schedule_write(ldcp_CHANNEL *chan)
+{
+    if ((event_get_events(chan->evt) & EV_WRITE) || ldcp_rb_get_nbytes(&chan->out) == 0) {
+        return;
+    }
+    if (event_pending(chan->evt, EV_READ | EV_WRITE, 0)) {
+        event_del(chan->evt);
+    }
+    short flags = EV_READ | EV_WRITE | EV_PERSIST;
+    event_assign(chan->evt, chan->client->io->evbase, chan->fd, flags, channel_callback, chan);
+    event_add(chan->evt, NULL);
 }
 
 LDCP_INTERNAL_API

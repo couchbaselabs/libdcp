@@ -16,6 +16,7 @@ SET(SOURCE_ROOT ${PROJECT_SOURCE_DIR})
 
 INCLUDE(cmake/Modules/GetLibcouchbaseFlags.cmake)
 INCLUDE(cmake/Modules/FindLibevent.cmake)
+INCLUDE(cmake/Modules/FindProfiler.cmake)
 INCLUDE(cmake/Modules/GetPlatformCCInfo.cmake)
 INCLUDE(cmake/Modules/GetVersionInfo.cmake)
 INCLUDE(CheckIncludeFiles)
@@ -85,7 +86,7 @@ SET_TARGET_PROPERTIES(ldcpcore PROPERTIES
 SET(LDCP_CORE_OBJS
   $<TARGET_OBJECTS:ldcpcore>)
 
-ADD_LIBRARY(dcp SHARED ${LDCP_CORE_OBJS})
+ADD_LIBRARY(dcp SHARED ${LDCP_CORE_OBJS} ${LIBPROFILE})
 
 IF(NOT APPLE)
   SET_TARGET_PROPERTIES(dcp PROPERTIES
