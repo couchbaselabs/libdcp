@@ -264,7 +264,7 @@ static void state_commit_snapshot(recv_STATE *state, recv_SNAPSHOT *snap)
 
     git_signature *sig = recv_get_signature(state->repo);
     char commit_msg[100] = {0};
-    snprintf(commit_msg, sizeof(commit_msg), "s:%" PRId64 ", e:%" PRId64 ", e:%" PRId64, snap->start_seqno,
+    snprintf(commit_msg, sizeof(commit_msg), "s:%" PRId64 ", e:%" PRId64 ", u:%" PRId64, snap->start_seqno,
              snap->end_seqno, client->session->failover_logs[snap->partition].newest->uuid);
 
     git_oid commit;
@@ -285,6 +285,12 @@ static void mutation_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldc
     ldcp_MUTATION *mut = (ldcp_MUTATION *)evt;
     recv_STATE *state = (recv_STATE *)client->cookie;
     recv_SNAPSHOT *snap = &state->snapshots[mut->partition];
+
+    if (snap->ref == NULL || snap->builder == NULL) {
+        ldcp_log(LOGARGS(ERROR), "Detected mutation outside of the snapshot for partition %d, skipping",
+                 (int)mut->partition);
+        return;
+    }
 
     ldcp_rb_reset(&snap->buf);
 
@@ -322,10 +328,11 @@ static void mutation_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldc
     ldcp_rb_write(&snap->buf, mut->key, mut->key_len);
     ldcp_rb_strcat(&snap->buf, "\n");
 
-    ldcp_rb_ensure_capacity(&snap->buf, mut->value_len + sizeof(tag));
+    ldcp_rb_ensure_capacity(&snap->buf, mut->value_len + sizeof(tag) + 1);
     snprintf(tag, sizeof(tag), "value(%d)\n", mut->value_len);
     ldcp_rb_strcat(&snap->buf, tag);
     ldcp_rb_write(&snap->buf, mut->value, mut->value_len);
+    ldcp_rb_strcat(&snap->buf, "\n");
 
     size_t data_len = ldcp_rb_get_nbytes(&snap->buf);
     char *data = malloc(data_len);
@@ -364,10 +371,70 @@ static void mutation_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldc
 static void deletion_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldcp_EVENT *evt)
 {
     ldcp_DELETION *del = (ldcp_DELETION *)evt;
-    fprintf(stderr,
-            "DELETION \"%.*s\", part=%" PRId16 ", cas=0x%016" PRIx64 ", by_seqno=0x%016" PRIx64 ", rev_seqno=%" PRIu64
-            "\n",
-            (int)del->key_len, del->key, del->partition, del->cas, del->by_seqno, del->rev_seqno);
+    recv_STATE *state = (recv_STATE *)client->cookie;
+    recv_SNAPSHOT *snap = &state->snapshots[del->partition];
+
+    if (snap->ref == NULL || snap->builder == NULL) {
+        ldcp_log(LOGARGS(ERROR), "Detected deletion outside of the snapshot for partition %d, skipping",
+                 (int)del->partition);
+        return;
+    }
+
+    ldcp_rb_reset(&snap->buf);
+
+    char tag[50] = {0};
+
+    ldcp_rb_ensure_capacity(&snap->buf, sizeof(tag) * 8);
+
+    snprintf(tag, sizeof(tag), "partition: %" PRIu16 "\n", del->partition);
+    ldcp_rb_strcat(&snap->buf, tag);
+
+    snprintf(tag, sizeof(tag), "cas: %" PRIu64 "\n", del->cas);
+    ldcp_rb_strcat(&snap->buf, tag);
+
+    snprintf(tag, sizeof(tag), "by_seqno: %" PRIu64 "\n", del->by_seqno);
+    ldcp_rb_strcat(&snap->buf, tag);
+
+    snprintf(tag, sizeof(tag), "rev_seqno: %" PRIu64 "\n", del->rev_seqno);
+    ldcp_rb_strcat(&snap->buf, tag);
+
+    ldcp_rb_ensure_capacity(&snap->buf, del->key_len + sizeof(tag) + 1);
+    snprintf(tag, sizeof(tag), "key(%d): ", del->key_len);
+    ldcp_rb_strcat(&snap->buf, tag);
+    ldcp_rb_write(&snap->buf, del->key, del->key_len);
+    ldcp_rb_strcat(&snap->buf, "\n");
+
+    size_t data_len = ldcp_rb_get_nbytes(&snap->buf);
+    char *data = malloc(data_len);
+    assert(ldcp_rb_read(&snap->buf, data, data_len) == data_len);
+
+    int rc;
+    git_oid blob;
+
+    rc = git_blob_create_frombuffer(&blob, state->repo, data, data_len);
+    if (rc != GIT_OK) {
+        ldcp_log(LOGARGS(ERROR), "Failed to create blob for key \"%.*s\" in partition %d, rc=%d", (int)del->key_len,
+                 del->key, (int)del->partition, (int)rc);
+        return;
+    }
+    char *path = calloc(del->key_len + 1, sizeof(char));
+    strncpy(path, del->key, del->key_len);
+    int ii;
+    for (ii = 0; ii < del->key_len; ii++) {
+        if (path[ii] == '\0') {
+            path[ii] = '_';
+        }
+    }
+    rc = git_treebuilder_insert(NULL, snap->builder, path, &blob, GIT_FILEMODE_BLOB);
+    free(path);
+    if (rc != GIT_OK) {
+        ldcp_log(LOGARGS(ERROR), "Failed to insert blob for key \"%.*s\" in partition %d, rc=%d", (int)del->key_len,
+                 del->key, (int)del->partition, (int)rc);
+        return;
+    }
+    if (del->by_seqno == snap->end_seqno) {
+        state_commit_snapshot(state, snap);
+    }
     (void)type;
 }
 
@@ -511,7 +578,6 @@ int main(int argc, char *argv[])
     options->settings = settings;
     options->type = LDCP_TYPE_PRODUCER;
     options->host = "127.0.0.1";
-    options->host = "192.168.1.101";
     options->port = "11210";
     options->bucket = "default";
     options->username = "Administrator";
