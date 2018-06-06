@@ -56,12 +56,14 @@ typedef struct {
     struct ldcp_LOGGER *logger;
     void (*dtorcb)(const void *);
     void *dtorarg;
+    int enable_snappy : 1;
 } ldcp_SETTINGS;
 
 LDCP_INTERNAL_API ldcp_SETTINGS *ldcp_settings_new(void);
 
 #define ldcp_settings_ref(settings) ((void)(settings)->refcount++)
 LDCP_INTERNAL_API void ldcp_settings_unref(ldcp_SETTINGS *);
+LDCP_INTERNAL_API ldcp_STATUS ldcp_settings_set_option(ldcp_SETTINGS *settings, const char *key, const char *value);
 
 #ifdef __cplusplus
 }

@@ -76,7 +76,7 @@ typedef enum {
 
 typedef enum { LDCP_TYPE_CONSUMER = 0x00, LDCP_TYPE_PRODUCER = 0x01, LDCP_TYPE_NOTIFIER = 0x02 } ldcp_CLIENT_TYPE;
 
-typedef enum { LDCP_OK = 0, LDCP_BADARG = 1, LDCP_NOCONFIG = 2 } ldcp_STATUS;
+typedef enum { LDCP_OK = 0, LDCP_BADARG = 1, LDCP_NOCONFIG = 2, LDCP_UNSUPPORTED = 3 } ldcp_STATUS;
 
 #ifdef __cplusplus
 }

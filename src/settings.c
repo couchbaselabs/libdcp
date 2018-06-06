@@ -23,6 +23,7 @@ ldcp_SETTINGS *ldcp_settings_new(void)
     ldcp_SETTINGS *settings = calloc(1, sizeof(*settings));
     settings->refcount = 1;
     settings->logger = ldcp_init_console_logger();
+    settings->enable_snappy = 1;
     return settings;
 }
 
@@ -36,4 +37,34 @@ void ldcp_settings_unref(ldcp_SETTINGS *settings)
         settings->dtorcb(settings->dtorarg);
     }
     free(settings);
+}
+
+typedef ldcp_STATUS (*cntl_HANDLER)(ldcp_SETTINGS *settings, const char *key, const char *value);
+typedef struct {
+    const char *key;
+    cntl_HANDLER handler;
+} cntl_OPTION;
+
+static ldcp_STATUS handler_enable_snappy(ldcp_SETTINGS *settings, const char *key, const char *value)
+{
+    if (strcmp(value, "true") == 0 || strcmp(value, "on") == 0 || strcmp(value, "1") == 0) {
+        settings->enable_snappy = 1;
+    } else if (strcmp(value, "false") == 0 || strcmp(value, "off") == 0 || strcmp(value, "0") == 0) {
+        settings->enable_snappy = 0;
+    }
+    return LDCP_BADARG;
+}
+
+static cntl_OPTION options_map[] = {{"enable_snappy", handler_enable_snappy}, {NULL, NULL}};
+
+ldcp_STATUS ldcp_settings_set_option(ldcp_SETTINGS *settings, const char *key, const char *value)
+{
+    cntl_OPTION *cur;
+
+    for (cur = options_map; cur->key; cur++) {
+        if (strcmp(cur->key, key) == 0) {
+            return cur->handler(settings, key, value);
+        }
+    }
+    return LDCP_UNSUPPORTED;
 }

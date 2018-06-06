@@ -176,7 +176,9 @@ static void send_hello(ldcp_CHANNEL *chan)
     }
     features[nfeatures++] = PROTOCOL_BINARY_FEATURE_XATTR;
     features[nfeatures++] = PROTOCOL_BINARY_FEATURE_SELECT_BUCKET;
-    features[nfeatures++] = PROTOCOL_BINARY_FEATURE_SNAPPY;
+    if (chan->client->settings->enable_snappy) {
+        features[nfeatures++] = PROTOCOL_BINARY_FEATURE_SNAPPY;
+    }
     features[nfeatures++] = PROTOCOL_BINARY_FEATURE_DUPLEX;
     features[nfeatures++] = PROTOCOL_BINARY_FEATURE_CLUSTERMAP_CHANGE_NOTIFICATION;
 

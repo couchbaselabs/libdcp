@@ -83,6 +83,7 @@ static void setup_sigquit_handler()
 typedef struct recv_SNAPSHOT {
     git_reference *ref;
     git_treebuilder *builder;
+    ldcp_RINGBUFFER buf;
     uint16_t partition;
     uint64_t start_seqno;
     uint64_t end_seqno;
@@ -210,6 +211,7 @@ static void state_free(recv_STATE *state)
                     git_treebuilder_free(state->snapshots[i].builder);
                     state->snapshots[i].builder = NULL;
                 }
+                ldcp_rb_destruct(&state->snapshots[i].buf);
             }
             free(state->snapshots);
         }
@@ -281,27 +283,58 @@ static void state_commit_snapshot(recv_STATE *state, recv_SNAPSHOT *snap)
 static void mutation_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldcp_EVENT *evt)
 {
     ldcp_MUTATION *mut = (ldcp_MUTATION *)evt;
-    /*
-    fprintf(stderr,
-            "MUTATION \"%.*s\", part=%" PRId16 ", cas=0x%016" PRIx64 ", datatype=0x%02" PRIx8 ", flags=0x%08" PRIx32
-            ", expiration=%" PRIu32 ", lock_time=%" PRIu32 ", by_seqno=0x%016" PRIx64 ", rev_seqno=%" PRIu64 "\n",
-            (int)mut->key_len, mut->key, mut->partition, mut->cas, mut->datatype, mut->flags, mut->expiration,
-            mut->lock_time, mut->by_seqno, mut->rev_seqno);
-    if (mut->datatype & PROTOCOL_BINARY_DATATYPE_COMPRESSED) {
-        ldcp_dump_bytes(stdout, "snappy compressed", mut->value, mut->value_len);
-    } else {
-        fwrite(mut->value, mut->value_len, sizeof(char), stdout);
-        fwrite("\n", 1, sizeof(char), stdout);
-        fflush(stdout);
-    }
-    */
-
     recv_STATE *state = (recv_STATE *)client->cookie;
     recv_SNAPSHOT *snap = &state->snapshots[mut->partition];
+
+    ldcp_rb_reset(&snap->buf);
+
+    char tag[50] = {0};
+
+    ldcp_rb_ensure_capacity(&snap->buf, sizeof(tag) * 8);
+
+    snprintf(tag, sizeof(tag), "partition: %" PRIu16 "\n", mut->partition);
+    ldcp_rb_strcat(&snap->buf, tag);
+
+    snprintf(tag, sizeof(tag), "cas: %" PRIu64 "\n", mut->cas);
+    ldcp_rb_strcat(&snap->buf, tag);
+
+    snprintf(tag, sizeof(tag), "datatype: %" PRIu8 "\n", mut->datatype);
+    ldcp_rb_strcat(&snap->buf, tag);
+
+    snprintf(tag, sizeof(tag), "flags: %" PRIu32 "\n", mut->flags);
+    ldcp_rb_strcat(&snap->buf, tag);
+
+    snprintf(tag, sizeof(tag), "expiration: %" PRIu32 "\n", mut->expiration);
+    ldcp_rb_strcat(&snap->buf, tag);
+
+    snprintf(tag, sizeof(tag), "lock_time: %" PRIu32 "\n", mut->lock_time);
+    ldcp_rb_strcat(&snap->buf, tag);
+
+    snprintf(tag, sizeof(tag), "by_seqno: %" PRIu64 "\n", mut->by_seqno);
+    ldcp_rb_strcat(&snap->buf, tag);
+
+    snprintf(tag, sizeof(tag), "rev_seqno: %" PRIu64 "\n", mut->rev_seqno);
+    ldcp_rb_strcat(&snap->buf, tag);
+
+    ldcp_rb_ensure_capacity(&snap->buf, mut->key_len + sizeof(tag) + 1);
+    snprintf(tag, sizeof(tag), "key(%d): ", mut->key_len);
+    ldcp_rb_strcat(&snap->buf, tag);
+    ldcp_rb_write(&snap->buf, mut->key, mut->key_len);
+    ldcp_rb_strcat(&snap->buf, "\n");
+
+    ldcp_rb_ensure_capacity(&snap->buf, mut->value_len + sizeof(tag));
+    snprintf(tag, sizeof(tag), "value(%d)\n", mut->value_len);
+    ldcp_rb_strcat(&snap->buf, tag);
+    ldcp_rb_write(&snap->buf, mut->value, mut->value_len);
+
+    size_t data_len = ldcp_rb_get_nbytes(&snap->buf);
+    char *data = malloc(data_len);
+    assert(ldcp_rb_read(&snap->buf, data, data_len) == data_len);
+
     int rc;
     git_oid blob;
 
-    rc = git_blob_create_frombuffer(&blob, state->repo, mut->value, mut->value_len);
+    rc = git_blob_create_frombuffer(&blob, state->repo, data, data_len);
     if (rc != GIT_OK) {
         ldcp_log(LOGARGS(ERROR), "Failed to create blob for key \"%.*s\" in partition %d, rc=%d", (int)mut->key_len,
                  mut->key, (int)mut->partition, (int)rc);
@@ -424,6 +457,9 @@ static void snapshot_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldc
     snap->partition = msg->partition;
     snap->start_seqno = msg->start_seqno;
     snap->end_seqno = msg->end_seqno;
+    if (ldcp_rb_get_size(&snap->buf) == 0) {
+        ldcp_rb_init(&snap->buf, 256);
+    }
 
     snap->ref = get_partition_branch(state, msg->partition);
     if (snap->ref == NULL) {
@@ -436,7 +472,8 @@ static void snapshot_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldc
     if (rc != GIT_OK) {
         git_reference_free(snap->ref);
         snap->ref = NULL;
-        ldcp_log(LOGARGS(ERROR), "Failed to lookup parent commit for partition (%d), rc=%d", (int)msg->partition, (int)rc);
+        ldcp_log(LOGARGS(ERROR), "Failed to lookup parent commit for partition (%d), rc=%d", (int)msg->partition,
+                 (int)rc);
         return;
     }
 
@@ -456,7 +493,8 @@ static void snapshot_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldc
     if (rc != GIT_OK) {
         git_reference_free(snap->ref);
         snap->ref = NULL;
-        ldcp_log(LOGARGS(ERROR), "Failed to create tree builder for partition (%d), rc=%d", (int)msg->partition, (int)rc);
+        ldcp_log(LOGARGS(ERROR), "Failed to create tree builder for partition (%d), rc=%d", (int)msg->partition,
+                 (int)rc);
     }
     (void)type;
 }
@@ -464,6 +502,7 @@ static void snapshot_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldc
 int main(int argc, char *argv[])
 {
     settings = ldcp_settings_new();
+    ldcp_settings_set_option(settings, "enable_snappy", "false");
 
     setup_sigint_handler();
     setup_sigquit_handler();
