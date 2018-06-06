@@ -96,6 +96,16 @@ typedef struct recv_STATE {
     recv_SNAPSHOT *snapshots;
 } recv_STATE;
 
+static git_signature *recv_get_signature(git_repository *repo)
+{
+    git_signature *sig = NULL;
+    int rc = git_signature_default(&sig, repo);
+    if (rc != GIT_OK) {
+        git_signature_now(&sig, "recv", "cbc@couchbase");
+    }
+    return sig;
+}
+
 static recv_STATE *state_new(const char *repo_path)
 {
     recv_STATE *obj;
@@ -143,20 +153,12 @@ static recv_STATE *state_new(const char *repo_path)
             goto CLEANUP;
         }
 
-        git_signature *sig;
-        rc = git_signature_default(&sig, obj->repo);
-        if (rc < 0) {
-            ldcp_log(LOGARGS(ERROR),
-                     "Unable to create commit signature (missing user.{email,name} in git config?). rc=%d", rc);
-            git_tree_free(tree);
-            goto CLEANUP;
-        }
-
+        git_signature *sig = recv_get_signature(obj->repo);
         git_oid commit_id;
         rc = git_commit_create_v(&commit_id, obj->repo, "HEAD", sig, sig, NULL, "root commit", tree, 0);
         git_tree_free(tree);
-        git_signature_free(sig);
         if (rc < 0) {
+            git_signature_free(sig);
             ldcp_log(LOGARGS(ERROR), "Unable to create the initial commit. rc=%d", rc);
             goto CLEANUP;
         }
@@ -164,6 +166,7 @@ static recv_STATE *state_new(const char *repo_path)
         git_commit *commit;
         rc = git_commit_lookup(&commit, obj->repo, &commit_id);
         if (rc < 0) {
+            git_signature_free(sig);
             ldcp_log(LOGARGS(ERROR), "Unable to lookup the initial commit. rc=%d", rc);
             goto CLEANUP;
         }
@@ -175,6 +178,7 @@ static recv_STATE *state_new(const char *repo_path)
             goto CLEANUP;
         }
         git_commit_free(commit);
+        git_signature_free(sig);
 
         char sha1[GIT_OID_HEXSZ + 1] = {0};
         git_oid_tostr(sha1, sizeof(sha1), &commit_id);
@@ -258,12 +262,7 @@ static void state_commit_snapshot(recv_STATE *state, recv_SNAPSHOT *snap)
         return;
     }
 
-    git_signature *sig;
-    rc = git_signature_default(&sig, state->repo);
-    if (rc != GIT_OK) {
-        git_signature_now(&sig, "recv", "cbc@couchbase");
-    }
-
+    git_signature *sig = recv_get_signature(state->repo);
     char commit_msg[100] = {0};
     snprintf(commit_msg, sizeof(commit_msg), "%" PRId64 "-%" PRId64, snap->start_seqno, snap->end_seqno);
 
