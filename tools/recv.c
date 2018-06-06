@@ -16,6 +16,7 @@
  */
 
 #include <signal.h>
+#include <assert.h>
 #include <libdcp/dcp.h>
 #include <git2.h>
 
@@ -79,98 +80,114 @@ static void setup_sigquit_handler()
     sigaction(SIGQUIT, &action, NULL);
 }
 
+typedef struct recv_SNAPSHOT {
+    git_reference *ref;
+    git_treebuilder *builder;
+    uint16_t partition;
+    uint64_t start_seqno;
+    uint64_t end_seqno;
+} recv_SNAPSHOT;
+
 typedef struct recv_STATE {
     char *repo_path;
     git_repository *repo;
-    uint32_t num_indexes;
-    git_index **indexes;
+    uint32_t num_snapshots;
+    recv_SNAPSHOT *snapshots;
 } recv_STATE;
 
 static recv_STATE *state_new(const char *repo_path)
 {
-    recv_STATE *obj = calloc(1, sizeof(recv_STATE));
-    int rc;
+    recv_STATE *obj;
+    int rc, success = 0;
 
     rc = git_libgit2_init();
     if (rc < 0) {
-        ldcp_log(LOGARGS(ERROR), "Failed to initialize libgit2. rc=%d %s", rc);
+        ldcp_log(LOGARGS(ERROR), "Failed to initialize libgit2. rc=%d", rc);
         return NULL;
     }
-
+    obj = calloc(1, sizeof(recv_STATE));
     git_repository_init_options initopts = GIT_REPOSITORY_INIT_OPTIONS_INIT;
-    initopts.flags = GIT_REPOSITORY_INIT_MKPATH;
+    initopts.flags = GIT_REPOSITORY_INIT_MKPATH | GIT_REPOSITORY_INIT_BARE;
     rc = git_repository_init_ext(&obj->repo, repo_path, &initopts);
-    if (rc) {
-        const git_error *err;
-        const char *msg;
-        err = giterr_last();
-        if (err) {
-            msg = err->message;
-        }
-        ldcp_log(LOGARGS(ERROR), "Failed to initialize git repository. rc=%d %s", rc, msg ? msg : "");
-        return NULL;
+    if (rc != GIT_OK) {
+        ldcp_log(LOGARGS(ERROR), "Failed to initialize git repository. rc=%d", rc);
+        goto CLEANUP;
     }
-    {
-        repo_path = git_repository_path(obj->repo);
-        int len = strlen(repo_path);
-        const char *trail = strstr(repo_path, ".git/");
-        if (trail) {
-            len = trail - repo_path;
-        }
-        ldcp_log(LOGARGS(INFO), "Using git repo at \"%.*s\"", len, repo_path);
-    }
+    ldcp_log(LOGARGS(INFO), "Using git repo at \"%s\"", git_repository_path(obj->repo));
 
     git_object *head = NULL;
     rc = git_revparse_single(&head, obj->repo, "HEAD");
     if (rc == GIT_ENOTFOUND) {
         ldcp_log(LOGARGS(DEBUG), "HEAD object is not found. Will try to create empty object");
 
-        git_signature *sig;
-        rc = git_signature_default(&sig, obj->repo);
-        if (rc < 0) {
-            ldcp_log(LOGARGS(ERROR),
-                     "Unable to create commit signature (missing user.{email,name} in git config?). rc=%d", rc);
-            return NULL;
-        }
-
         git_index *index;
         rc = git_repository_index(&index, obj->repo);
         if (rc < 0) {
             ldcp_log(LOGARGS(ERROR), "Unable to open repository index. rc=%d", rc);
-            return NULL;
+            goto CLEANUP;
         }
 
         git_oid tree_id;
         rc = git_index_write_tree(&tree_id, index);
+        git_index_free(index);
         if (rc < 0) {
             ldcp_log(LOGARGS(ERROR), "Unable to write initial tree from index. rc=%d", rc);
-            return NULL;
+            goto CLEANUP;
         }
-        git_index_free(index);
 
         git_tree *tree;
         rc = git_tree_lookup(&tree, obj->repo, &tree_id);
         if (rc < 0) {
             ldcp_log(LOGARGS(ERROR), "Unable to lookup initial tree. rc=%d", rc);
-            return NULL;
+            goto CLEANUP;
+        }
+
+        git_signature *sig;
+        rc = git_signature_default(&sig, obj->repo);
+        if (rc < 0) {
+            ldcp_log(LOGARGS(ERROR),
+                     "Unable to create commit signature (missing user.{email,name} in git config?). rc=%d", rc);
+            git_tree_free(tree);
+            goto CLEANUP;
         }
 
         git_oid commit_id;
         rc = git_commit_create_v(&commit_id, obj->repo, "HEAD", sig, sig, NULL, "root commit", tree, 0);
+        git_tree_free(tree);
+        git_signature_free(sig);
         if (rc < 0) {
             ldcp_log(LOGARGS(ERROR), "Unable to create the initial commit. rc=%d", rc);
-            return NULL;
+            goto CLEANUP;
         }
+
+        git_commit *commit;
+        rc = git_commit_lookup(&commit, obj->repo, &commit_id);
+        if (rc < 0) {
+            ldcp_log(LOGARGS(ERROR), "Unable to lookup the initial commit. rc=%d", rc);
+            goto CLEANUP;
+        }
+
+        git_oid tag;
+        rc = git_tag_create(&tag, obj->repo, "root", (git_object *)commit, sig, "beginning of the history", 1);
+        if (rc < 0) {
+            ldcp_log(LOGARGS(ERROR), "Unable to tag the initial commit. rc=%d", rc);
+            goto CLEANUP;
+        }
+        git_commit_free(commit);
 
         char sha1[GIT_OID_HEXSZ + 1] = {0};
         git_oid_tostr(sha1, sizeof(sha1), &commit_id);
         ldcp_log(LOGARGS(INFO), "Created root commit %s", sha1);
-
-        git_tree_free(tree);
-        git_signature_free(sig);
     }
+    success = 1;
+
+CLEANUP:
     if (head) {
         git_object_free(head);
+    }
+    if (!success) {
+        free(obj);
+        return NULL;
     }
 
     return obj;
@@ -182,15 +199,19 @@ static void state_free(recv_STATE *state)
         if (state->repo) {
             git_repository_free(state->repo);
         }
-        if (state->indexes) {
+        if (state->snapshots) {
             uint32_t i;
-            for (i = 0; i < state->num_indexes; i++) {
-                if (state->indexes[i]) {
-                    git_index_free(state->indexes[i]);
-                    state->indexes[i] = NULL;
+            for (i = 0; i < state->num_snapshots; i++) {
+                if (state->snapshots[i].ref) {
+                    git_reference_free(state->snapshots[i].ref);
+                    state->snapshots[i].ref = NULL;
+                }
+                if (state->snapshots[i].builder) {
+                    git_treebuilder_free(state->snapshots[i].builder);
+                    state->snapshots[i].builder = NULL;
                 }
             }
-            free(state->indexes);
+            free(state->snapshots);
         }
         free(state);
     }
@@ -201,17 +222,66 @@ static void bootstrap_callback(ldcp_CLIENT *client)
 {
     recv_STATE *state = (recv_STATE *)client->cookie;
 
-    state->num_indexes = 0;
-    ldcp_client_number_partitions(client, &state->num_indexes);
-    if (state->num_indexes) {
-        state->indexes = calloc(state->num_indexes, sizeof(git_index *));
+    state->num_snapshots = 0;
+    ldcp_client_number_partitions(client, &state->num_snapshots);
+    if (state->num_snapshots) {
+        state->snapshots = calloc(state->num_snapshots, sizeof(recv_SNAPSHOT));
         ldcp_install_config_callback(client, NULL);
+    }
+}
+
+static void state_commit_snapshot(recv_STATE *state, recv_SNAPSHOT *snap)
+{
+    int rc;
+    git_oid updater;
+
+    rc = git_treebuilder_write(&updater, snap->builder);
+    git_treebuilder_free(snap->builder);
+    snap->builder = NULL;
+    if (rc != GIT_OK) {
+        git_reference_free(snap->ref);
+        snap->ref = NULL;
+        ldcp_log(LOGARGS(ERROR), "Failed to create updated tree for partition %d, rc=%d", (int)snap->partition,
+                 (int)rc);
+        return;
+    }
+
+    git_tree *updated_tree;
+    rc = git_tree_lookup(&updated_tree, state->repo, &updater);
+    if (rc != GIT_OK) {
+        git_reference_free(snap->ref);
+        snap->ref = NULL;
+        ldcp_log(LOGARGS(ERROR), "Failed to lookup updated tree for partition %d, rc=%d", (int)snap->partition,
+                 (int)rc);
+        return;
+    }
+
+    git_signature *sig;
+    rc = git_signature_default(&sig, state->repo);
+    if (rc != GIT_OK) {
+        git_signature_now(&sig, "recv", "cbc@couchbase");
+    }
+
+    char commit_msg[100] = {0};
+    snprintf(commit_msg, sizeof(commit_msg), "%" PRId64 "-%" PRId64, snap->start_seqno, snap->end_seqno);
+
+    git_oid commit;
+    rc = git_commit_create_v(&commit, state->repo, git_reference_name(snap->ref), sig, sig, NULL, commit_msg,
+                             updated_tree, 1, git_reference_target(snap->ref));
+    git_reference_free(snap->ref);
+    snap->ref = NULL;
+    git_tree_free(updated_tree);
+    if (rc != GIT_OK) {
+        ldcp_log(LOGARGS(ERROR), "Failed to create commit for snapshot %s in partition %d, rc=%d", commit_msg,
+                 (int)snap->partition, (int)rc);
+        return;
     }
 }
 
 static void mutation_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldcp_EVENT *evt)
 {
     ldcp_MUTATION *mut = (ldcp_MUTATION *)evt;
+    /*
     fprintf(stderr,
             "MUTATION \"%.*s\", part=%" PRId16 ", cas=0x%016" PRIx64 ", datatype=0x%02" PRIx8 ", flags=0x%08" PRIx32
             ", expiration=%" PRIu32 ", lock_time=%" PRIu32 ", by_seqno=0x%016" PRIx64 ", rev_seqno=%" PRIu64 "\n",
@@ -223,6 +293,37 @@ static void mutation_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldc
         fwrite(mut->value, mut->value_len, sizeof(char), stdout);
         fwrite("\n", 1, sizeof(char), stdout);
         fflush(stdout);
+    }
+    */
+
+    recv_STATE *state = (recv_STATE *)client->cookie;
+    recv_SNAPSHOT *snap = &state->snapshots[mut->partition];
+    int rc;
+    git_oid blob;
+
+    rc = git_blob_create_frombuffer(&blob, state->repo, mut->value, mut->value_len);
+    if (rc != GIT_OK) {
+        ldcp_log(LOGARGS(ERROR), "Failed to create blob for key \"%.*s\" in partition %d, rc=%d", (int)mut->key_len,
+                 mut->key, (int)mut->partition, (int)rc);
+        return;
+    }
+    char *path = calloc(mut->key_len + 1, sizeof(char));
+    strncpy(path, mut->key, mut->key_len);
+    int ii;
+    for (ii = 0; ii < mut->key_len; ii++) {
+        if (path[ii] == '\0') {
+            path[ii] = '_';
+        }
+    }
+    rc = git_treebuilder_insert(NULL, snap->builder, path, &blob, GIT_FILEMODE_BLOB);
+    free(path);
+    if (rc != GIT_OK) {
+        ldcp_log(LOGARGS(ERROR), "Failed to insert blob for key \"%.*s\" in partition %d, rc=%d", (int)mut->key_len,
+                 mut->key, (int)mut->partition, (int)rc);
+        return;
+    }
+    if (mut->by_seqno == snap->end_seqno) {
+        state_commit_snapshot(state, snap);
     }
     (void)type;
 }
@@ -237,46 +338,126 @@ static void deletion_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldc
     (void)type;
 }
 
+static git_reference *get_partition_branch(recv_STATE *state, uint16_t partition)
+{
+    git_reference *ref = NULL;
+    int rc;
+    char branch_name[20] = {0};
+
+    snprintf(branch_name, sizeof(branch_name), "p%d", (int)partition);
+    rc = git_branch_lookup(&ref, state->repo, branch_name, GIT_BRANCH_LOCAL);
+    switch (rc) {
+        case GIT_ENOTFOUND:
+            ldcp_log(LOGARGS(DEBUG), "branch \"%s\" is not found and will be created\n", branch_name);
+
+            git_object *root;
+            rc = git_revparse_single(&root, state->repo, "root");
+            assert(git_object_type(root) == GIT_OBJ_TAG);
+            if (rc != GIT_OK) {
+                git_reference_free(ref);
+                ldcp_log(LOGARGS(ERROR), "Failed to lookup root tag, rc=%d", (int)partition, (int)rc);
+                return NULL;
+            }
+
+            const git_oid *root_id = git_tag_target_id((git_tag *)root);
+            git_commit *root_commit;
+            rc = git_commit_lookup(&root_commit, state->repo, root_id);
+            git_object_free(root);
+            if (rc != GIT_OK) {
+                git_reference_free(ref);
+                ldcp_log(LOGARGS(ERROR), "Failed to lookup root commit, rc=%d", (int)partition, (int)rc);
+                return NULL;
+            }
+
+            rc = git_branch_create(&ref, state->repo, branch_name, root_commit, 1);
+            git_commit_free(root_commit);
+            if (rc != GIT_OK) {
+                git_reference_free(ref);
+                ldcp_log(LOGARGS(ERROR), "Failed to create git branch for partition (%d), rc=%d", (int)partition,
+                         (int)rc);
+                return NULL;
+            }
+            break;
+        case GIT_OK:
+            break;
+        default:
+            git_reference_free(ref);
+            ldcp_log(LOGARGS(ERROR), "Failed to lookup git branch for partition (%d), rc=%d", (int)partition, (int)rc);
+            return NULL;
+    }
+
+    git_reference *peeled = NULL;
+    rc = git_reference_resolve(&peeled, ref);
+    git_reference_free(ref);
+    if (rc != GIT_OK) {
+        ldcp_log(LOGARGS(ERROR), "Failed to lookup git branch for partition (%d), rc=%d", (int)partition, (int)rc);
+    }
+    assert(git_reference_type(peeled) == GIT_REF_OID);
+
+    return peeled;
+}
+
 static void snapshot_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldcp_EVENT *evt)
 {
-    ldcp_SNAPSHOT *snap = (ldcp_SNAPSHOT *)evt;
+    ldcp_SNAPSHOT *msg = (ldcp_SNAPSHOT *)evt;
     recv_STATE *state = (recv_STATE *)client->cookie;
 
-    if (snap->partition >= state->num_indexes) {
+    if (msg->partition >= state->num_snapshots) {
         ldcp_log(LOGARGS(ERROR), "Snapshot partition (%d) is greater than number of allocated indexes (%d). Skipping",
-                 (int)snap->partition, (int)state->num_indexes);
+                 (int)msg->partition, (int)state->num_snapshots);
         return;
     }
-    if (state->indexes[snap->partition]) {
-        ldcp_log(LOGARGS(WARN), "Found uncommitted index for partition %d. Wiping it", (int)snap->partition);
-        git_index_free(state->indexes[snap->partition]);
-        state->indexes[snap->partition] = NULL;
+
+    recv_SNAPSHOT *snap = &state->snapshots[msg->partition];
+
+    if (snap->ref || snap->builder) {
+        ldcp_log(LOGARGS(ERROR), "Detected unfinished snapshot for partition %d. Discarding it", (int)msg->partition);
+        if (snap->ref) {
+            git_reference_free(snap->ref);
+            snap->ref = NULL;
+        }
+        if (snap->builder) {
+            git_treebuilder_free(snap->builder);
+            snap->builder = NULL;
+        }
     }
+    snap->partition = msg->partition;
+    snap->start_seqno = msg->start_seqno;
+    snap->end_seqno = msg->end_seqno;
+
+    snap->ref = get_partition_branch(state, msg->partition);
+    if (snap->ref == NULL) {
+        return;
+    }
+
     int rc;
-    rc = git_index_new(&state->indexes[snap->partition]);
-    if (rc != 0) {
-        ldcp_log(LOGARGS(ERROR), "Unable to create the index for partition %d. rc=%d", (int)snap->partition, rc);
+    git_commit *parent_commit;
+    rc = git_commit_lookup(&parent_commit, state->repo, git_reference_target(snap->ref));
+    if (rc != GIT_OK) {
+        git_reference_free(snap->ref);
+        snap->ref = NULL;
+        ldcp_log(LOGARGS(ERROR), "Failed to lookup parent commit for partition (%d), rc=%d", (int)msg->partition, (int)rc);
         return;
     }
 
-    char list[100] = {0};
-    int off = 0;
-
-    if (snap->flags & DCP_SNAPSHOT_MARKER_MEMORY) {
-        off += snprintf(list + off, sizeof(list) - off, "%sMEMORY(0x%02x)", off ? "," : "", DCP_SNAPSHOT_MARKER_MEMORY);
-    }
-    if (snap->flags & DCP_SNAPSHOT_MARKER_DISK) {
-        off += snprintf(list + off, sizeof(list) - off, "%sDISK(0x%02x)", off ? "," : "", DCP_SNAPSHOT_MARKER_DISK);
-    }
-    if (snap->flags & DCP_SNAPSHOT_MARKER_CHK) {
-        off += snprintf(list + off, sizeof(list) - off, "%sCHK(0x%02x)", off ? "," : "", DCP_SNAPSHOT_MARKER_CHK);
-    }
-    if (snap->flags & DCP_SNAPSHOT_MARKER_ACK) {
-        off += snprintf(list + off, sizeof(list) - off, "%sACK(0x%02x)", off ? "," : "", DCP_SNAPSHOT_MARKER_ACK);
+    git_tree *parent_tree;
+    rc = git_commit_tree(&parent_tree, parent_commit);
+    git_commit_free(parent_commit);
+    if (rc != GIT_OK) {
+        git_reference_free(snap->ref);
+        snap->ref = NULL;
+        ldcp_log(LOGARGS(ERROR), "Failed to get commit tree for partition (%d), rc=%d", (int)msg->partition, (int)rc);
+        return;
     }
 
-    fprintf(stderr, "SNAPSHOT [0x%016" PRIx64 ", 0x%016" PRIx64 "], part=%d, flags=%s\n", snap->start_seqno,
-            snap->end_seqno, snap->partition, off ? list : "(none)");
+    git_treebuilder *builder;
+    rc = git_treebuilder_new(&snap->builder, state->repo, parent_tree);
+    git_tree_free(parent_tree);
+    if (rc != GIT_OK) {
+        git_reference_free(snap->ref);
+        snap->ref = NULL;
+        ldcp_log(LOGARGS(ERROR), "Failed to create tree builder for partition (%d), rc=%d", (int)msg->partition, (int)rc);
+    }
     (void)type;
 }
 
@@ -312,13 +493,14 @@ int main(int argc, char *argv[])
         options->password = argv[5];
     }
 
-    const char *repo_path = NULL;
+    char *repo_path = NULL;
 
     if (argc > 6) {
         repo_path = argv[6];
     }
     if (repo_path == NULL) {
-        repo_path = options->bucket;
+        repo_path = calloc(strlen(options->bucket) + strlen("/tmp/.git"), sizeof(char));
+        sprintf(repo_path, "/tmp/%s.git", options->bucket);
     }
     recv_STATE *state = state_new(repo_path);
     options->cookie = state;
@@ -337,6 +519,7 @@ int main(int argc, char *argv[])
     ldcp_client_dispatch(client);
 
     state_free(state);
+    free(repo_path);
     ldcp_client_free(client);
     ldcp_settings_unref(settings);
     return 0;
