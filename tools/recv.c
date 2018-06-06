@@ -264,7 +264,8 @@ static void state_commit_snapshot(recv_STATE *state, recv_SNAPSHOT *snap)
 
     git_signature *sig = recv_get_signature(state->repo);
     char commit_msg[100] = {0};
-    snprintf(commit_msg, sizeof(commit_msg), "%" PRId64 "-%" PRId64, snap->start_seqno, snap->end_seqno);
+    snprintf(commit_msg, sizeof(commit_msg), "s:%" PRId64 ", e:%" PRId64 ", e:%" PRId64, snap->start_seqno,
+             snap->end_seqno, client->session->failover_logs[snap->partition].newest->uuid);
 
     git_oid commit;
     rc = git_commit_create_v(&commit, state->repo, git_reference_name(snap->ref), sig, sig, NULL, commit_msg,
@@ -510,6 +511,7 @@ int main(int argc, char *argv[])
     options->settings = settings;
     options->type = LDCP_TYPE_PRODUCER;
     options->host = "127.0.0.1";
+    options->host = "192.168.1.101";
     options->port = "11210";
     options->bucket = "default";
     options->username = "Administrator";
