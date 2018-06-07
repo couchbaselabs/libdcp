@@ -474,9 +474,22 @@ void ldcp_channel_start_stream(ldcp_CHANNEL *chan, int16_t partition)
     frame.message.header.request.bodylen = htonl(frame.message.header.request.extlen);
     frame.message.header.request.vbucket = htons(partition);
     frame.message.body.flags = DCP_STREAM_ACTIVE_VB_ONLY | DCP_STREAM_STRICT_VBUUID;
-    frame.message.body.start_seqno = SEQNO_MIN;
-    frame.message.body.end_seqno = SEQNO_MAX;
-    frame.message.body.vbucket_uuid = session->failover_logs[partition].newest->uuid;
+
+    ldcp_START_STREAM evt = {.version = 0};
+    evt.partition = partition;
+    evt.start_seqno = SEQNO_MIN;
+    evt.end_seqno = SEQNO_MAX;
+    evt.snap_start_seqno = SEQNO_MIN;
+    evt.snap_end_seqno = SEQNO_MIN;
+    evt.partition_uuid = session->failover_logs[partition].newest->uuid;
+    chan->client->callbacks[LDCP_CALLBACK_START_STREAM](chan->client, LDCP_CALLBACK_START_STREAM, (ldcp_EVENT *)&evt);
+
+    frame.message.body.start_seqno = ldcp_htonll(evt.start_seqno);
+    frame.message.body.end_seqno = ldcp_htonll(evt.end_seqno);
+    frame.message.body.snap_start_seqno = ldcp_htonll(evt.snap_start_seqno);
+    frame.message.body.snap_end_seqno = ldcp_htonll(evt.snap_end_seqno);
+    frame.message.body.vbucket_uuid = ldcp_htonll(evt.partition_uuid);
+
     ldcp_rb_ensure_capacity(&chan->out, sizeof(frame.bytes));
     ldcp_rb_write(&chan->out, frame.bytes, sizeof(frame.bytes));
     schedule_write(chan);

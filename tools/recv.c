@@ -264,8 +264,9 @@ static void state_commit_snapshot(recv_STATE *state, recv_SNAPSHOT *snap)
 
     git_signature *sig = recv_get_signature(state->repo);
     char commit_msg[100] = {0};
-    snprintf(commit_msg, sizeof(commit_msg), "s:%" PRId64 ", e:%" PRId64 ", u:%" PRId64, snap->start_seqno,
-             snap->end_seqno, client->session->failover_logs[snap->partition].newest->uuid);
+    uint64_t partition_uuid = client->session->failover_logs[snap->partition].newest->uuid;
+    snprintf(commit_msg, sizeof(commit_msg), "s:%" PRIu64 ", e:%" PRIu64 ", u:%" PRIu64, snap->start_seqno,
+             snap->end_seqno, partition_uuid);
 
     git_oid commit;
     rc = git_commit_create_v(&commit, state->repo, git_reference_name(snap->ref), sig, sig, NULL, commit_msg,
@@ -566,6 +567,49 @@ static void snapshot_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldc
     (void)type;
 }
 
+static void start_stream_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldcp_EVENT *evt)
+{
+    ldcp_START_STREAM *msg = (ldcp_START_STREAM *)evt;
+    git_reference *ref = NULL;
+    int rc;
+    char branch_name[20] = {0};
+    recv_STATE *state = (recv_STATE *)client->cookie;
+
+    snprintf(branch_name, sizeof(branch_name), "p%d", (int)evt->partition);
+    rc = git_branch_lookup(&ref, state->repo, branch_name, GIT_BRANCH_LOCAL);
+    if (rc == GIT_ENOTFOUND) {
+        return;
+    }
+    assert(git_reference_type(ref) == GIT_REF_OID);
+    git_commit *commit;
+    rc = git_commit_lookup(&commit, state->repo, git_reference_target(ref));
+    git_reference_free(ref);
+    if (rc != GIT_OK) {
+        ldcp_log(LOGARGS(ERROR), "Failed to lookup latest commit for partition (%d), rc=%d", (int)msg->partition,
+                 (int)rc);
+        return;
+    }
+    const char *commit_msg = git_commit_summary(commit);
+    const char *commit_msg_end = commit_msg + strlen(commit_msg);
+    char *ptr;
+    ptr = strstr(commit_msg, "e:");
+    if (ptr == NULL || ptr + 2 >= commit_msg_end) {
+        return;
+    }
+    uint64_t end_seqno = strtoull(ptr + 2, NULL, 10);
+    ptr = strstr(commit_msg, "u:");
+    if (ptr == NULL || ptr + 2 >= commit_msg_end) {
+        return;
+    }
+    uint64_t partition_uuid = strtoull(ptr + 2, NULL, 10);
+
+    msg->start_seqno = end_seqno;
+    msg->snap_start_seqno = msg->start_seqno;
+    msg->snap_end_seqno = msg->start_seqno;
+    msg->partition_uuid = partition_uuid;
+    (void)type;
+}
+
 int main(int argc, char *argv[])
 {
     settings = ldcp_settings_new();
@@ -621,6 +665,7 @@ int main(int argc, char *argv[])
     ldcp_install_event_callback(client, LDCP_CALLBACK_SNAPSHOT, snapshot_callback);
     ldcp_install_event_callback(client, LDCP_CALLBACK_MUTATION, mutation_callback);
     ldcp_install_event_callback(client, LDCP_CALLBACK_DELETION, deletion_callback);
+    ldcp_install_event_callback(client, LDCP_CALLBACK_START_STREAM, start_stream_callback);
     ldcp_client_bootstrap(client);
     ldcp_client_dispatch(client);
 

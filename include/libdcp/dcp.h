@@ -66,11 +66,21 @@ typedef struct ldcp_SNAPSHOT {
     uint32_t flags;
 } ldcp_SNAPSHOT;
 
+typedef struct ldcp_START_STREAM {
+    LDCP_EVENT_BASE
+    uint64_t start_seqno;
+    uint64_t end_seqno;
+    uint64_t snap_start_seqno;
+    uint64_t snap_end_seqno;
+    uint64_t partition_uuid;
+} ldcp_START_STREAM;
+
 typedef enum {
     LDCP_CALLBACK_DEFAULT = 0, /**< default fallback */
     LDCP_CALLBACK_SNAPSHOT,
     LDCP_CALLBACK_MUTATION,
     LDCP_CALLBACK_DELETION,
+    LDCP_CALLBACK_START_STREAM,
     LDCP_CALLBACK__MAX
 } ldcp_CALLBACK;
 
@@ -80,6 +90,6 @@ typedef enum { LDCP_OK = 0, LDCP_BADARG = 1, LDCP_NOCONFIG = 2, LDCP_UNSUPPORTED
 
 #ifdef __cplusplus
 }
-#    endif /* __cplusplus */
+#endif /* __cplusplus */
 
 #endif /* LIBDCP_DCP_H */
