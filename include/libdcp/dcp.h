@@ -46,6 +46,9 @@ typedef struct ldcp_MUTATION {
     uint32_t lock_time;
     void *key;
     uint32_t key_len;
+    uint32_t xattrs_num;
+    void *xattrs;
+    uint32_t xattrs_len;
     void *value;
     uint32_t value_len;
 } ldcp_MUTATION;

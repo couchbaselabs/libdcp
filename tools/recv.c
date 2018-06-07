@@ -329,6 +329,34 @@ static void mutation_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldc
     ldcp_rb_write(&snap->buf, mut->key, mut->key_len);
     ldcp_rb_strcat(&snap->buf, "\n");
 
+    if (mut->datatype & PROTOCOL_BINARY_DATATYPE_XATTR) {
+        ldcp_rb_ensure_capacity(&snap->buf, sizeof(tag));
+        snprintf(tag, sizeof(tag), "xattrs_num: %" PRIu32 "\n", mut->xattrs_num);
+        ldcp_rb_strcat(&snap->buf, tag);
+        uint32_t idx;
+        char *ptr = mut->xattrs;
+        for (idx = 0; idx < mut->xattrs_num; idx++) {
+            uint32_t plen;
+            memcpy(&plen, ptr, sizeof(plen));
+            plen = ntohl(plen);
+            ptr += sizeof(uint32_t);
+            uint32_t klen = strlen(ptr);
+            uint32_t vlen = plen - klen - 1;
+            ldcp_rb_ensure_capacity(&snap->buf, klen + sizeof(tag) + 1);
+            snprintf(tag, sizeof(tag), "xattr_key(%d): ", klen);
+            ldcp_rb_strcat(&snap->buf, tag);
+            ldcp_rb_write(&snap->buf, ptr, klen);
+            ldcp_rb_strcat(&snap->buf, "\n");
+            ptr += klen + 1;
+            ldcp_rb_ensure_capacity(&snap->buf, vlen + sizeof(tag) + 1);
+            snprintf(tag, sizeof(tag), "xattr_value(%d)\n", vlen);
+            ldcp_rb_strcat(&snap->buf, tag);
+            ldcp_rb_write(&snap->buf, ptr, vlen);
+            ldcp_rb_strcat(&snap->buf, "\n");
+            ptr += vlen;
+        }
+    }
+
     ldcp_rb_ensure_capacity(&snap->buf, mut->value_len + sizeof(tag) + 1);
     snprintf(tag, sizeof(tag), "value(%d)\n", mut->value_len);
     ldcp_rb_strcat(&snap->buf, tag);

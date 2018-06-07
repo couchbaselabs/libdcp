@@ -475,7 +475,7 @@ void ldcp_channel_start_stream(ldcp_CHANNEL *chan, int16_t partition)
     frame.message.header.request.vbucket = htons(partition);
     frame.message.body.flags = DCP_STREAM_ACTIVE_VB_ONLY | DCP_STREAM_STRICT_VBUUID;
 
-    ldcp_START_STREAM evt = {.version = 0};
+    ldcp_START_STREAM evt = {0};
     evt.partition = partition;
     evt.start_seqno = SEQNO_MIN;
     evt.end_seqno = SEQNO_MAX;
@@ -552,7 +552,7 @@ static void read_dcp_snapshot_marker(ldcp_CHANNEL *chan, protocol_binary_respons
         return;
     }
 
-    ldcp_SNAPSHOT evt = {.version = 0};
+    ldcp_SNAPSHOT evt = {0};
     evt.partition = ntohs(hdr->response.status);
 
     memcpy(&evt.start_seqno, body, sizeof(uint64_t));
@@ -575,7 +575,7 @@ static void read_dcp_snapshot_marker(ldcp_CHANNEL *chan, protocol_binary_respons
 
 static void read_dcp_mutation(ldcp_CHANNEL *chan, protocol_binary_response_header *hdr, void *body, uint32_t nbody)
 {
-    ldcp_MUTATION evt = {.version = 0};
+    ldcp_MUTATION evt = {0};
     uint8_t extlen = hdr->response.extlen;
 
     evt.key_len = ntohs(hdr->response.keylen);
@@ -612,15 +612,35 @@ static void read_dcp_mutation(ldcp_CHANNEL *chan, protocol_binary_response_heade
     body += sizeof(uint8_t);  // nru
 
     evt.key = body;
-    evt.value = body + evt.key_len;
+    body += evt.key_len;
     evt.value_len = ntohl(hdr->response.bodylen) - evt.key_len - extlen;
+    if (evt.datatype & PROTOCOL_BINARY_DATATYPE_XATTR) {
+        memcpy(&evt.xattrs_len, body, sizeof(evt.xattrs_len));
+        evt.xattrs_len = ntohl(evt.xattrs_len);
+        body += sizeof(uint32_t);
+        evt.xattrs = body;
+        body += evt.xattrs_len;
+        evt.value_len -= sizeof(uint32_t) + evt.xattrs_len;
+        {
+            const char *ptr = evt.xattrs;
+            const char *end = evt.xattrs + evt.xattrs_len;
+            while (ptr < end) {
+                uint32_t plen;
+                memcpy(&plen, ptr, sizeof(plen));
+                plen = ntohl(plen);
+                ptr += sizeof(uint32_t) + plen;
+                evt.xattrs_num++;
+            }
+        }
+    }
+    evt.value = body;
 
     chan->client->callbacks[LDCP_CALLBACK_MUTATION](chan->client, LDCP_CALLBACK_MUTATION, (ldcp_EVENT *)&evt);
 }
 
 static void read_dcp_deletion(ldcp_CHANNEL *chan, protocol_binary_response_header *hdr, void *body, uint32_t nbody)
 {
-    ldcp_DELETION evt = {.version = 0};
+    ldcp_DELETION evt = {0};
     uint8_t extlen = hdr->response.extlen;
 
     evt.key_len = ntohs(hdr->response.keylen);
