@@ -19,11 +19,18 @@
 
 #include <event2/event.h>
 
-static void dummy_event_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldcp_EVENT *evt)
+static void dummy_event_callback(ldcp_CLIENT *client, ldcp_EVENT_CALLBACK type, const ldcp_EVENT *evt)
 {
     (void)client;
     (void)type;
     (void)evt;
+}
+
+static void dummy_resp_callback(ldcp_CLIENT *client, ldcp_RESP_CALLBACK type, const ldcp_RESP *resp)
+{
+    (void)client;
+    (void)type;
+    (void)resp;
 }
 
 LDCP_INTERNAL_API
@@ -44,8 +51,11 @@ ldcp_STATUS ldcp_client_new(ldcp_OPTIONS *options, ldcp_CLIENT **client)
     obj->session = ldcp_session_new(NULL);
     obj->io = ldcp_io_new();
     int cc;
-    for (cc = 0; cc < LDCP_CALLBACK__MAX; cc++) {
-        obj->callbacks[cc] = dummy_event_callback;
+    for (cc = 0; cc < LDCP_EVENT__MAX; cc++) {
+        obj->on_event[cc] = dummy_event_callback;
+    }
+    for (cc = 0; cc < LDCP_RESP__MAX; cc++) {
+        obj->on_resp[cc] = dummy_resp_callback;
     }
     obj->on_config = NULL;
     obj->cookie = options->cookie;
@@ -108,17 +118,40 @@ ldcp_CFGCALLBACK ldcp_install_config_callback(ldcp_CLIENT *client, ldcp_CFGCALLB
 }
 
 LDCP_INTERNAL_API
-ldcp_EVTCALLBACK ldcp_install_event_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, ldcp_EVTCALLBACK cb)
+ldcp_EVTCALLBACK ldcp_install_event_callback(ldcp_CLIENT *client, ldcp_EVENT_CALLBACK type, ldcp_EVTCALLBACK cb)
 {
     if (type >= LDCP_CALLBACK__MAX || type < 0) {
         return NULL;
     }
-    ldcp_EVTCALLBACK old = client->callbacks[type];
+    ldcp_EVTCALLBACK old = client->on_event[type];
     if (cb == NULL) {
         cb = dummy_event_callback;
     }
-    client->callbacks[type] = cb;
+    client->on_event[type] = cb;
     if (old == dummy_event_callback) {
+        return NULL;
+    }
+    return old;
+}
+
+LDCP_INTERNAL_API
+ldcp_STATUS ldcp_set_with_meta(ldcp_CLIENT *client, ldcp_CMD_SETWITHMETA *cmd, void *opaque)
+{
+    return LDCP_OK;
+}
+
+LDCP_INTERNAL_API
+ldcp_RESPCALLBACK ldcp_install_resp_callback(ldcp_CLIENT *client, ldcp_RESP_CALLBACK type, ldcp_RESPCALLBACK cb)
+{
+    if (type >= LDCP_RESP_CALLBACK__MAX || type < 0) {
+        return NULL;
+    }
+    ldcp_RESPCALLBACK old = client->on_resp[type];
+    if (cb == NULL) {
+        cb = dummy_resp_callback;
+    }
+    client->on_resp[type] = cb;
+    if (old == dummy_resp_callback) {
         return NULL;
     }
     return old;

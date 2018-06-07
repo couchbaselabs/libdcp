@@ -24,8 +24,10 @@
 extern "C" {
 #endif /* __cplusplus */
 
-typedef void (*ldcp_EVTCALLBACK)(struct ldcp_CLIENT *client, ldcp_CALLBACK type, const ldcp_EVENT *evt);
+typedef void (*ldcp_EVTCALLBACK)(struct ldcp_CLIENT *client, ldcp_EVENT_CALLBACK type, const ldcp_EVENT *evt);
+typedef void (*ldcp_RESPCALLBACK)(struct ldcp_CLIENT *client, ldcp_RESP_CALLBACK type, const ldcp_EVENT *evt);
 typedef void (*ldcp_CFGCALLBACK)(struct ldcp_CLIENT *client);
+
 
 typedef struct ldcp_CLIENT {
     ldcp_SETTINGS *settings;
@@ -44,7 +46,8 @@ typedef struct ldcp_CLIENT {
     char host[NI_MAXHOST + 1];
     char port[NI_MAXSERV + 1];
     ldcp_CFGCALLBACK on_config;
-    ldcp_EVTCALLBACK callbacks[LDCP_CALLBACK__MAX];
+    ldcp_EVTCALLBACK on_event[LDCP_EVENT__MAX];
+    ldcp_RESPCALLBACK on_resp[LDCP_RESP__MAX];
     void *cookie; /**< user specified opaque cookie */
 } ldcp_CLIENT;
 

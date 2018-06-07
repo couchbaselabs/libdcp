@@ -19,6 +19,7 @@
 #include "internal.h"
 
 #include <signal.h>
+#include <git2.h>
 
 #include <event2/event.h>
 
@@ -84,110 +85,49 @@ static void setup_sigquit_handler()
     sigaction(SIGQUIT, &action, NULL);
 }
 
-static void event_handle_read(ldcp_RINGBUFFER *rb)
+int tree_walk_callback(const char *root, const git_tree_entry *entry, void *payload)
 {
-    size_t nkey;
-    char *key;
-
-    nkey = rb->nbytes;
-    key = malloc(nkey);
-
-    ldcp_rb_read(rb, key, nkey);
-    key[--nkey] = '\0';
-
-    int idx = 0;
-    uint16_t partition = 0;
-    ldcp_config_map_key(client->config, key, nkey, &idx, &partition);
-    fprintf(stderr, "key: \"%s\", idx=%d, partition=%d\n", key, idx, (int)partition);
-    ldcp_CHANNEL *chan = client->channels[idx];
-    {
-        protocol_binary_request_dcp_snapshot_marker frame = {0};
-
-        frame.message.header.request.magic = PROTOCOL_BINARY_REQ;
-        frame.message.header.request.datatype = PROTOCOL_BINARY_RAW_BYTES;
-        frame.message.header.request.opcode = PROTOCOL_BINARY_CMD_DCP_SNAPSHOT_MARKER;
-        frame.message.header.request.vbucket = htons(partition);
-        frame.message.header.request.extlen = 20;
-        frame.message.header.request.bodylen = htonl(frame.message.header.request.extlen);
-        frame.message.body.start_seqno = ldcp_htonll(counter);
-        frame.message.body.end_seqno = ldcp_htonll(counter + 1);
-        ldcp_rb_ensure_capacity(&chan->out, sizeof(frame.bytes));
-        ldcp_rb_write(&chan->out, frame.bytes, sizeof(frame.bytes));
-    }
-    {
-        char val[256] = {0};
-        snprintf(val, sizeof(val), "{\"counter\":%d}", (int)counter);
-        size_t nval = strlen(val);
-
-        protocol_binary_request_dcp_mutation frame = {0};
-        frame.message.header.request.magic = PROTOCOL_BINARY_REQ;
-        frame.message.header.request.datatype = PROTOCOL_BINARY_DATATYPE_JSON;
-        frame.message.header.request.opcode = PROTOCOL_BINARY_CMD_DCP_MUTATION;
-        frame.message.header.request.vbucket = htons(partition);
-        frame.message.header.request.extlen = 32;
-        frame.message.header.request.keylen = htons(nkey);
-        frame.message.header.request.bodylen = htonl(frame.message.header.request.extlen + nkey + nval);
-        frame.message.body.by_seqno = ldcp_htonll(counter);
-        frame.message.body.rev_seqno = ldcp_htonll(counter);
-        ldcp_rb_ensure_capacity(&chan->out, sizeof(frame.bytes) + nkey + nval);
-        ldcp_rb_write(&chan->out, frame.bytes, sizeof(frame.bytes));
-        ldcp_rb_write(&chan->out, key, nkey);
-        ldcp_rb_write(&chan->out, val, nval);
-    }
-
-    counter += 1;
-
-    free(key);
+    printf("name: %s\n", git_tree_entry_name(entry));
 }
 
-static void event_handler(int fd, short event, void *arg)
+static void bootstrap_callback(ldcp_CLIENT *client)
 {
-    ldcp_RINGBUFFER *rb = arg;
+    ldcp_SET_WITH_META cmd = {0};
+    cmd.flags = 0;
+    cmd.expiration = 0;
+    cmd.rev_seqno = 0;
+    cmd.cas = 0;
+    cmd.options = 0;
+    cmd.meta_len = 0;
+    cmd.meta = NULL;
+    cmd.key_len = 0;
+    cmd.key = NULL;
+    cmd.xattrs_len = 0;
+    cmd.xattrs = NULL;
+    cmd.value_len = 0;
+    cmd.value = NULL;
+    ldcp_set_with_meta(client, &cmd, NULL);
+    ldcp_install_config_callback(client, NULL);
+}
 
-    if (event & EV_READ) {
-        do {
-            ldcp_IOV iov[2] = {0};
-            if (rb->nbytes == rb->size) {
-                ldcp_rb_ensure_capacity(rb, 1);
-            }
-            ldcp_rb_get_iov(rb, LDCP_RINGBUFFER_WRITE, iov);
-            ssize_t rv;
-        DO_READ_AGAIN:
-            rv = readv(fd, (struct iovec *)iov, 2);
-            if (rv > 0) {
-                ldcp_rb_produced(rb, rv);
-            } else if (rv < 0) {
-                switch (errno) {
-                    case EINTR:
-                        goto DO_READ_AGAIN;
-                    case EWOULDBLOCK:
-#ifdef USE_EAGAIN
-                    case EAGAIN:
-#endif
-                        event_handle_read(rb);
-                        return;
-                    default:
-                        ldcp_log(LOGARGS(ERROR), "Failed to read data from stdin: %s", strerror(errno));
-                        return;
-                }
-            } else {
-                return;
-            }
-        } while (1);
-    }
+static void set_with_meta_callback(ldcp_CLIENT *client, ldcp_RESP_CALLBACK type, const ldcp_RESP *resp)
+{
+    (void)client;
+    (void)type;
+    (void)resp;
 }
 
 int main(int argc, char *argv[])
 {
     settings = ldcp_settings_new();
-    ldcp_log(LOGARGS(INFO), "Starting up");
+    ldcp_settings_set_option(settings, "enable_snappy", "false");
 
     setup_sigint_handler();
     setup_sigquit_handler();
 
     ldcp_OPTIONS *options = ldcp_options_new();
     options->settings = settings;
-    options->type = LDCP_TYPE_PRODUCER;
+    options->type = LDCP_TYPE_BASIC;
     options->host = "127.0.0.1";
     options->port = "11210";
     options->bucket = "default";
@@ -209,6 +149,15 @@ int main(int argc, char *argv[])
     if (argc > 5) {
         options->password = argv[5];
     }
+    char *repo_path = NULL;
+
+    if (argc > 6) {
+        repo_path = argv[6];
+    }
+    if (repo_path == NULL) {
+        repo_path = calloc(strlen(options->bucket) + strlen("/tmp/.git") + 1, sizeof(char));
+        sprintf(repo_path, "/tmp/%s.git", options->bucket);
+    }
 
     ldcp_STATUS status;
     status = ldcp_client_new(options, &client);
@@ -216,17 +165,91 @@ int main(int argc, char *argv[])
         ldcp_log(LOGARGS(ERROR), "Failed to initialize DCP client. status=%d", status);
         exit(EXIT_FAILURE);
     }
+    ldcp_install_config_callback(client, bootstrap_callback);
+    ldcp_install_resp_callback(client, LDCP_RESP_SETWITHMETA, set_with_meta_callback);
     ldcp_client_bootstrap(client);
 
-    ldcp_RINGBUFFER rb;
-    ldcp_rb_init(&rb, 8192);
-
-    struct event *ev;
-    fcntl(fileno(stdin), F_SETFL, fcntl(fileno(stdin), F_GETFL) | O_NONBLOCK);
-    ev = event_new(client->io->evbase, fileno(stdin), EV_TIMEOUT | EV_READ | EV_PERSIST, event_handler, &rb);
-    event_add(ev, NULL);
-
+    ldcp_log(LOGARGS(INFO), "Running");
     ldcp_client_dispatch(client);
+
+#ifdef 0
+    {
+        int rc, success = 0;
+        git_repository *repo;
+
+        rc = git_libgit2_init();
+        if (rc < 0) {
+            ldcp_log(LOGARGS(ERROR), "Failed to initialize libgit2. rc=%d", rc);
+            exit(1);
+        }
+        git_repository_init_options initopts = GIT_REPOSITORY_INIT_OPTIONS_INIT;
+        initopts.flags = GIT_REPOSITORY_INIT_MKPATH | GIT_REPOSITORY_INIT_BARE;
+        rc = git_repository_init_ext(&repo, repo_path, &initopts);
+        if (rc != GIT_OK) {
+            ldcp_log(LOGARGS(ERROR), "Failed to initialize git repository. rc=%d", rc);
+            exit(1);
+        }
+        ldcp_log(LOGARGS(INFO), "Using git repo at \"%s\"", git_repository_path(repo));
+
+        git_branch_iterator *iter;
+        rc = git_branch_iterator_new(&iter, repo, GIT_BRANCH_LOCAL);
+        if (rc != GIT_OK) {
+            ldcp_log(LOGARGS(ERROR), "Failed to create branch iterator. rc=%d", rc);
+            exit(1);
+        }
+
+        git_reference *ref;
+        git_branch_t type;
+        while (1) {
+            rc = git_branch_next(&ref, &type, iter);
+            if (rc == GIT_ITEROVER) {
+                break;
+            } else if (rc == GIT_OK) {
+                const char *name = git_reference_name(ref);
+                if (strncmp(name, "refs/heads/p", sizeof("refs/heads/p") - 1) == 0) {
+                    uint16_t partition = (uint16_t)strtoul(name + sizeof("refs/heads/p") - 1, NULL, 10);
+
+                    git_commit *commit;
+                    rc = git_commit_lookup(&commit, repo, git_reference_target(ref));
+                    if (rc != GIT_OK) {
+                        ldcp_log(LOGARGS(ERROR), "Failed to lookup top commit for partition (%d), rc=%d",
+                                 (int)partition, (int)rc);
+                        exit(1);
+                    }
+
+                    const char *commit_msg = git_commit_summary(commit);
+                    const char *commit_msg_end = commit_msg + strlen(commit_msg);
+                    char *ptr;
+                    ptr = strstr(commit_msg, "u:");
+                    if (ptr == NULL || ptr + 2 >= commit_msg_end) {
+                        exit(1);
+                    }
+                    uint64_t partition_uuid = strtoull(ptr + 2, NULL, 10);
+
+                    printf("branch: %s, partition: %d, uuid: %" PRIu64 "\n", name, partition, partition_uuid);
+
+                    git_tree *tree;
+                    rc = git_commit_tree(&tree, commit);
+                    git_commit_free(commit);
+                    if (rc != GIT_OK) {
+                        ldcp_log(LOGARGS(ERROR), "Failed to get commit tree for partition (%d), rc=%d", (int)partition,
+                                 (int)rc);
+                        exit(1);
+                    }
+
+                    git_tree_walk(tree, GIT_TREEWALK_PRE, tree_walk_callback, NULL);
+
+                    git_tree_free(tree);
+                }
+            } else {
+                ldcp_log(LOGARGS(ERROR), "Failed to iterate branches. rc=%d", rc);
+                exit(1);
+            }
+        }
+
+        git_branch_iterator_free(iter);
+    }
+#endif
 
     ldcp_log(LOGARGS(INFO), "Exiting");
 

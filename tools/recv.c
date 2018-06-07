@@ -648,7 +648,7 @@ int main(int argc, char *argv[])
 
     ldcp_OPTIONS *options = ldcp_options_new();
     options->settings = settings;
-    options->type = LDCP_TYPE_PRODUCER;
+    options->type = LDCP_TYPE_CONSUMER;
     options->host = "127.0.0.1";
     options->port = "11210";
     options->bucket = "default";
@@ -677,7 +677,7 @@ int main(int argc, char *argv[])
         repo_path = argv[6];
     }
     if (repo_path == NULL) {
-        repo_path = calloc(strlen(options->bucket) + strlen("/tmp/.git"), sizeof(char));
+        repo_path = calloc(strlen(options->bucket) + strlen("/tmp/.git") + 1, sizeof(char));
         sprintf(repo_path, "/tmp/%s.git", options->bucket);
     }
     recv_STATE *state = state_new(repo_path);
@@ -690,10 +690,10 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
     ldcp_install_config_callback(client, bootstrap_callback);
-    ldcp_install_event_callback(client, LDCP_CALLBACK_SNAPSHOT, snapshot_callback);
-    ldcp_install_event_callback(client, LDCP_CALLBACK_MUTATION, mutation_callback);
-    ldcp_install_event_callback(client, LDCP_CALLBACK_DELETION, deletion_callback);
-    ldcp_install_event_callback(client, LDCP_CALLBACK_START_STREAM, start_stream_callback);
+    ldcp_install_event_callback(client, LDCP_EVENT_SNAPSHOT, snapshot_callback);
+    ldcp_install_event_callback(client, LDCP_EVENT_MUTATION, mutation_callback);
+    ldcp_install_event_callback(client, LDCP_EVENT_DELETION, deletion_callback);
+    ldcp_install_event_callback(client, LDCP_EVENT_STARTSTREAM, start_stream_callback);
     ldcp_client_bootstrap(client);
     ldcp_client_dispatch(client);
 

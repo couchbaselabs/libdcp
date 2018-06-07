@@ -357,7 +357,7 @@ static void send_dcp_open(ldcp_CHANNEL *chan)
     frame.message.header.request.extlen = 8;
     frame.message.header.request.keylen = htons(keylen);
     frame.message.header.request.bodylen = htonl(frame.message.header.request.extlen + keylen);
-    frame.message.body.flags = htonl(chan->client->type | DCP_OPEN_INCLUDE_XATTRS);
+    frame.message.body.flags = htonl(DCP_OPEN_PRODUCER | DCP_OPEN_INCLUDE_XATTRS);
 
     ldcp_rb_ensure_capacity(&chan->out, sizeof(frame.bytes) + keylen);
     ldcp_rb_write(&chan->out, frame.bytes, sizeof(frame.bytes));
@@ -482,7 +482,7 @@ void ldcp_channel_start_stream(ldcp_CHANNEL *chan, int16_t partition)
     evt.snap_start_seqno = SEQNO_MIN;
     evt.snap_end_seqno = SEQNO_MIN;
     evt.partition_uuid = session->failover_logs[partition].newest->uuid;
-    chan->client->callbacks[LDCP_CALLBACK_START_STREAM](chan->client, LDCP_CALLBACK_START_STREAM, (ldcp_EVENT *)&evt);
+    chan->client->on_event[LDCP_EVENT_STARTSTREAM](chan->client, LDCP_EVENT_STARTSTREAM, (ldcp_EVENT *)&evt);
 
     frame.message.body.start_seqno = ldcp_htonll(evt.start_seqno);
     frame.message.body.end_seqno = ldcp_htonll(evt.end_seqno);
@@ -492,30 +492,6 @@ void ldcp_channel_start_stream(ldcp_CHANNEL *chan, int16_t partition)
 
     ldcp_rb_ensure_capacity(&chan->out, sizeof(frame.bytes));
     ldcp_rb_write(&chan->out, frame.bytes, sizeof(frame.bytes));
-    schedule_write(chan);
-}
-
-static void send_add_streams(ldcp_CHANNEL *chan)
-{
-    ldcp_CONFIG *config = chan->config;
-    protocol_binary_request_dcp_add_stream frame = {0};
-
-    frame.message.header.request.magic = PROTOCOL_BINARY_REQ;
-    frame.message.header.request.datatype = PROTOCOL_BINARY_RAW_BYTES;
-    frame.message.header.request.opcode = PROTOCOL_BINARY_CMD_DCP_ADD_STREAM;
-    frame.message.header.request.extlen = 4;
-    frame.message.header.request.bodylen = htonl(frame.message.header.request.extlen);
-    frame.message.body.flags = DCP_STREAM_ACTIVE_VB_ONLY | DCP_STREAM_STRICT_VBUUID;
-
-    ldcp_rb_ensure_capacity(&chan->out, sizeof(frame.bytes) * (config->npartitions / config->nservers));
-    int16_t ii;
-    for (ii = 0; ii < config->npartitions; ii++) {
-        if (config->partitions[ii].master == config->idx) {
-            frame.message.header.request.opaque = htonl(ii);
-            ldcp_rb_ensure_capacity(&chan->out, sizeof(frame.bytes));
-            ldcp_rb_write(&chan->out, frame.bytes, sizeof(frame.bytes));
-        }
-    }
     schedule_write(chan);
 }
 
@@ -570,7 +546,7 @@ static void read_dcp_snapshot_marker(ldcp_CHANNEL *chan, protocol_binary_respons
         send_snapshot_marker_response(chan, hdr->response.opaque);
     }
 
-    chan->client->callbacks[LDCP_CALLBACK_SNAPSHOT](chan->client, LDCP_CALLBACK_SNAPSHOT, (ldcp_EVENT *)&evt);
+    chan->client->on_event[LDCP_EVENT_SNAPSHOT](chan->client, LDCP_EVENT_SNAPSHOT, (ldcp_EVENT *)&evt);
 }
 
 static void read_dcp_mutation(ldcp_CHANNEL *chan, protocol_binary_response_header *hdr, void *body, uint32_t nbody)
@@ -635,7 +611,7 @@ static void read_dcp_mutation(ldcp_CHANNEL *chan, protocol_binary_response_heade
     }
     evt.value = body;
 
-    chan->client->callbacks[LDCP_CALLBACK_MUTATION](chan->client, LDCP_CALLBACK_MUTATION, (ldcp_EVENT *)&evt);
+    chan->client->on_event[LDCP_EVENT_MUTATION](chan->client, LDCP_EVENT_MUTATION, (ldcp_EVENT *)&evt);
 }
 
 static void read_dcp_deletion(ldcp_CHANNEL *chan, protocol_binary_response_header *hdr, void *body, uint32_t nbody)
@@ -664,7 +640,7 @@ static void read_dcp_deletion(ldcp_CHANNEL *chan, protocol_binary_response_heade
 
     evt.key = body;
 
-    chan->client->callbacks[LDCP_CALLBACK_DELETION](chan->client, LDCP_CALLBACK_DELETION, (ldcp_EVENT *)&evt);
+    chan->client->on_event[LDCP_EVENT_DELETION](chan->client, LDCP_EVENT_DELETION, (ldcp_EVENT *)&evt);
 }
 
 #define STREAM_CLOSED_STATUSES(X)                                                                                      \
@@ -806,7 +782,9 @@ void ldcp_channel_handle_read(ldcp_CHANNEL *chan)
                         switch (status) {
                             case PROTOCOL_BINARY_RESPONSE_SUCCESS:
                                 read_and_upgrade_config(chan, &hdr, body, nbody);
-                                send_dcp_open(chan);
+                                if (chan->client->type == LDCP_TYPE_CONSUMER) {
+                                    send_dcp_open(chan);
+                                }
                                 break;
                             default:
                                 ldcp_log(LOGARGS(chan, ERROR),
@@ -819,11 +797,7 @@ void ldcp_channel_handle_read(ldcp_CHANNEL *chan)
                     case PROTOCOL_BINARY_CMD_DCP_OPEN:
                         switch (status) {
                             case PROTOCOL_BINARY_RESPONSE_SUCCESS:
-                                if (chan->client->type >= LDCP_TYPE_PRODUCER) {
-                                    send_dcp_control(chan);
-                                } else {
-                                    send_add_streams(chan);
-                                }
+                                send_dcp_control(chan);
                                 break;
                             default:
                                 ldcp_log(LOGARGS(chan, ERROR),

@@ -27,6 +27,19 @@
 extern "C" {
 #endif
 
+typedef enum { LDCP_TYPE_BASIC = 0x00, LDCP_TYPE_CONSUMER = 0x01 } ldcp_CLIENT_TYPE;
+
+typedef enum { LDCP_OK = 0, LDCP_BADARG = 1, LDCP_NOCONFIG = 2, LDCP_UNSUPPORTED = 3 } ldcp_STATUS;
+
+typedef enum {
+    LDCP_EVENT_DEFAULT = 0, /**< default fallback */
+    LDCP_EVENT_SNAPSHOT,
+    LDCP_EVENT_MUTATION,
+    LDCP_EVENT_DELETION,
+    LDCP_EVENT_STARTSTREAM,
+    LDCP_EVENT__MAX
+} ldcp_EVENT_CALLBACK;
+
 #define LDCP_EVENT_BASE                                                                                                \
     uint32_t version;                                                                                                  \
     uint16_t partition;
@@ -78,21 +91,55 @@ typedef struct ldcp_START_STREAM {
     uint64_t partition_uuid;
 } ldcp_START_STREAM;
 
+#define LDCP_RESP_BASE                                                                                                 \
+    uint32_t version;                                                                                                  \
+    ldcp_STATUS status;                                                                                                \
+    void *cookie;
+
+typedef struct ldcp_RESP {
+    LDCP_RESP_BASE
+} ldcp_RESP;
+
 typedef enum {
-    LDCP_CALLBACK_DEFAULT = 0, /**< default fallback */
-    LDCP_CALLBACK_SNAPSHOT,
-    LDCP_CALLBACK_MUTATION,
-    LDCP_CALLBACK_DELETION,
-    LDCP_CALLBACK_START_STREAM,
-    LDCP_CALLBACK__MAX
-} ldcp_CALLBACK;
+    LDCP_RESP_DEFAULT = 0, /**< default fallback */
+    LDCP_RESP_SETWITHMETA,
+    LDCP_RESP__MAX
+} ldcp_RESP_CALLBACK;
 
-typedef enum { LDCP_TYPE_CONSUMER = 0x00, LDCP_TYPE_PRODUCER = 0x01, LDCP_TYPE_NOTIFIER = 0x02 } ldcp_CLIENT_TYPE;
+#define LDCP_CMD_BASE                                                                                                  \
+    uint32_t version;                                                                                                  \
+    uint16_t partition;
 
-typedef enum { LDCP_OK = 0, LDCP_BADARG = 1, LDCP_NOCONFIG = 2, LDCP_UNSUPPORTED = 3 } ldcp_STATUS;
+typedef struct ldcp_CMD_SETWITHMETA {
+    LDCP_CMD_BASE
+    void *cookie;
+    uint32_t flags;
+    uint32_t expiration;
+    uint64_t rev_seqno;
+    uint64_t cas;
+
+    /*
+    SKIP_CONFLICT_RESOLUTION_FLAG 0x01
+    FORCE_ACCEPT_WITH_META_OPS 0x02
+    REGENERATE_CAS 0x04
+    */
+
+    uint32_t options;
+    uint16_t meta_len;
+    void *key;
+    uint32_t key_len;
+    void *xattrs; /**< properly encoded XATTRs, might be changed in future */
+    uint32_t xattrs_len;
+    void *value;
+    uint32_t value_len;
+} ldcp_CMD_SETWITHMETA;
+
+typedef struct ldcp_RESP_SETWITHMETA {
+    LDCP_RESP_BASE
+} ldcp_RESP_SETWITHMETA;
 
 #ifdef __cplusplus
 }
-#endif /* __cplusplus */
+#    endif /* __cplusplus */
 
 #endif /* LIBDCP_DCP_H */
