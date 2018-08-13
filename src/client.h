@@ -25,7 +25,7 @@ extern "C" {
 #endif /* __cplusplus */
 
 typedef void (*ldcp_EVTCALLBACK)(struct ldcp_CLIENT *client, ldcp_EVENT_CALLBACK type, const ldcp_EVENT *evt);
-typedef void (*ldcp_RESPCALLBACK)(struct ldcp_CLIENT *client, ldcp_RESP_CALLBACK type, const ldcp_EVENT *evt);
+typedef void (*ldcp_RESPCALLBACK)(struct ldcp_CLIENT *client, ldcp_RESP_CALLBACK type, const ldcp_RESP *resp);
 typedef void (*ldcp_CFGCALLBACK)(struct ldcp_CLIENT *client);
 
 
@@ -85,10 +85,16 @@ LDCP_INTERNAL_API
 ldcp_STATUS ldcp_client_number_partitions(ldcp_CLIENT *client, uint32_t *out);
 
 LDCP_INTERNAL_API
-ldcp_EVTCALLBACK ldcp_install_event_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, ldcp_EVTCALLBACK cb);
+ldcp_EVTCALLBACK ldcp_install_event_callback(ldcp_CLIENT *client, ldcp_EVENT_CALLBACK type, ldcp_EVTCALLBACK cb);
+
+LDCP_INTERNAL_API
+ldcp_RESPCALLBACK ldcp_install_resp_callback(ldcp_CLIENT *client, ldcp_RESP_CALLBACK type, ldcp_RESPCALLBACK cb);
 
 LDCP_INTERNAL_API
 ldcp_CFGCALLBACK ldcp_install_config_callback(ldcp_CLIENT *client, ldcp_CFGCALLBACK cb);
+
+LDCP_INTERNAL_API
+ldcp_STATUS ldcp_set_with_meta(ldcp_CLIENT *client, ldcp_CMD_SETWITHMETA *cmd, void *opaque);
 
 #ifdef __cplusplus
 }

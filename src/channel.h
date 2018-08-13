@@ -111,6 +111,9 @@ void ldcp_channel_start_connect(ldcp_CHANNEL *chan);
 LDCP_INTERNAL_API
 void ldcp_channel_start_stream(ldcp_CHANNEL *chan, int16_t partition);
 
+LDCP_INTERNAL_API
+void ldcp_channel_schedule_write(ldcp_CHANNEL *chan);
+
 #ifdef __cplusplus
 }
 #    endif /* __cplusplus */

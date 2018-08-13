@@ -294,6 +294,15 @@ typedef enum {
     PROTOCOL_BINARY_CMD_SASL_LIST_MECHS = 0x20,
     PROTOCOL_BINARY_CMD_SASL_AUTH = 0x21,
     PROTOCOL_BINARY_CMD_SASL_STEP = 0x22,
+    /**
+     * CMD_GET_META is used to retrieve the meta section for an item.
+     */
+    PROTOCOL_BINARY_CMD_GET_META = 0xa0,
+    PROTOCOL_BINARY_CMD_SET_WITH_META = 0xa2,
+    PROTOCOL_BINARY_CMD_ADD_WITH_META = 0xa4,
+    PROTOCOL_BINARY_CMD_SNAPSHOT_VB_STATES = 0xa6,
+    PROTOCOL_BINARY_CMD_VBUCKET_BATCH_COUNT = 0xa7,
+    PROTOCOL_BINARY_CMD_DEL_WITH_META = 0xa8,
 
     PROTOCOL_BINARY_CMD_GET_REPLICA = 0x83,
 
@@ -1047,6 +1056,63 @@ typedef union {
     } message;
     uint8_t bytes[sizeof(protocol_binary_request_header) + 32];
 } protocol_binary_request_dcp_mutation;
+
+/**
+ * This flag is used by the setWithMeta/addWithMeta/deleteWithMeta packets
+ * to specify that the operation should be forced. The update will not
+ * be subject to conflict resolution and the target vb can be active/pending or
+ * replica.
+ */
+#define FORCE_WITH_META_OP 0x01
+
+/**
+ * This flag is used to indicate that the *_with_meta should be accepted
+ * regardless of the bucket config. LWW buckets require this flag.
+ */
+#define FORCE_ACCEPT_WITH_META_OPS 0x02
+
+/**
+ * This flag asks that the server regenerates the CAS. The server requires
+ * that SKIP_CONFLICT_RESOLUTION_FLAG is set along with this option.
+ */
+#define REGENERATE_CAS 0x04
+
+/**
+ * This flag is used by the setWithMeta/addWithMeta/deleteWithMeta packets
+ * to specify that the conflict resolution mechanism should be skipped for
+ * this operation.
+ */
+#define SKIP_CONFLICT_RESOLUTION_FLAG 0x08
+
+#define SET_RET_META 1
+#define ADD_RET_META 2
+#define DEL_RET_META 3
+
+/**
+ * This flag is used with the get meta response packet. If set it
+ * specifies that the item recieved has been deleted, but that the
+ * items meta data is still contained in ep-engine. Eg. the item
+ * has been soft deleted.
+ */
+#define GET_META_ITEM_DELETED_FLAG 0x01
+
+/**
+ * The physical layout for the CMD_SET_WITH_META looks like the the normal
+ * set request with the addition of a bulk of extra meta data stored
+ * at the <b>end</b> of the package.
+ */
+typedef union {
+    struct {
+        protocol_binary_request_header header;
+        struct {
+            uint32_t flags;
+            uint32_t expiration;
+            uint64_t seqno;
+            uint64_t cas;
+        } body;
+    } message;
+    uint8_t bytes[sizeof(protocol_binary_request_header) + 24];
+} protocol_binary_request_set_with_meta;
 
 #ifdef __cplusplus
 }

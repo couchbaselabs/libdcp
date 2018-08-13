@@ -32,6 +32,7 @@ static int counter = 0;
 
 static ldcp_SETTINGS *settings = NULL;
 static ldcp_CLIENT *client = NULL;
+static char *repo_path = NULL;
 
 static int terminating = 0;
 
@@ -85,36 +86,233 @@ static void setup_sigquit_handler()
     sigaction(SIGQUIT, &action, NULL);
 }
 
-int tree_walk_callback(const char *root, const git_tree_entry *entry, void *payload)
+typedef struct tree_walk_payload {
+    git_repository *repo;
+    uint16_t partition;
+    uint64_t partition_uuid;
+} tree_walk_payload;
+
+static int tree_walk_callback(const char *root, const git_tree_entry *entry, void *payload)
 {
-    printf("name: %s\n", git_tree_entry_name(entry));
+    tree_walk_payload *branch = payload;
+    ldcp_CMD_SETWITHMETA cmd = {0};
+
+    if (git_tree_entry_type(entry) != GIT_OBJ_BLOB) {
+        return 0;
+    }
+    git_blob *blob;
+    git_tree_entry_to_object((git_object **)&blob, branch->repo, entry);
+    const char *data = (const char *)git_blob_rawcontent(blob);
+    size_t data_len = (size_t)git_blob_rawsize(blob);
+
+    const char *ptr;
+    const char *meta = data, *value = NULL;
+    size_t meta_len = data_len, value_len = 0;
+    ptr = memchr(meta, (int)'\n', data_len);
+    if (ptr) {
+        meta_len = ptr - meta;
+        ptr++;
+        value_len = strtoul(ptr, (char **)&value, 10);
+        if (value_len == 0 || value_len == ULONG_MAX) {
+            value = NULL;
+            value_len = 0;
+        }
+        value++;
+    }
+    if (value == NULL || value_len == 0) {
+        // TODO: DELETE
+        git_blob_free(blob);
+        return 0;
+    }
+    cJSON *meta_json = cJSON_Parse(meta);
+    if (meta_json == NULL) {
+        git_blob_free(blob);
+        return 0;
+    }
+    cJSON *val;
+
+    val = cJSON_GetObjectItem(meta_json, "key");
+    if (val && val->type == cJSON_String) {
+        cmd.key = val->valuestring;
+        cmd.key_len = strlen(cmd.key);
+    } else {
+        cJSON_Delete(meta_json);
+        git_blob_free(blob);
+        return 0;
+    }
+
+    val = cJSON_GetObjectItem(meta_json, "partition");
+    if (val && val->type == cJSON_Number) {
+        cmd.partition = val->valueint;
+    }
+    val = cJSON_GetObjectItem(meta_json, "datatype");
+    if (val && val->type == cJSON_Number) {
+        cmd.datatype = val->valueint;
+    }
+    val = cJSON_GetObjectItem(meta_json, "flags");
+    if (val && val->type == cJSON_Number) {
+        cmd.flags = val->valueint;
+    }
+    val = cJSON_GetObjectItem(meta_json, "expiration");
+    if (val && val->type == cJSON_Number) {
+        cmd.expiration = val->valueint;
+    }
+    val = cJSON_GetObjectItem(meta_json, "rev_seqno");
+    if (val && val->type == cJSON_Number) {
+        cmd.rev_seqno = val->valueint;
+    }
+    val = cJSON_GetObjectItem(meta_json, "cas");
+    if (val && val->type == cJSON_Number) {
+        cmd.cas = val->valueint;
+    }
+    cmd.value_len = value_len;
+    cmd.value = value;
+
+    val = cJSON_GetObjectItem(meta_json, "xattrs");
+    if (val && val->type == cJSON_Array) {
+        int nxattrs = cJSON_GetArraySize(val);
+        int ii;
+        char *buf = calloc(meta_len, sizeof(char));
+        char *ptr = buf;
+        size_t xlen = 0;
+        for (ii = 0; ii < nxattrs; ii++) {
+            cJSON *xpair = cJSON_GetArrayItem(val, ii);
+            if (xpair == NULL || xpair->type != cJSON_Array || cJSON_GetArraySize(xpair) != 2) {
+                continue;
+            }
+            const char *xkey = NULL, *xvalue = NULL;
+            cJSON *xentry;
+            xentry = cJSON_GetArrayItem(val, 0);
+            if (xentry && xentry->type == cJSON_String) {
+                xkey = xentry->valuestring;
+            }
+            xentry = cJSON_GetArrayItem(val, 1);
+            if (xentry && xentry->type == cJSON_String) {
+                xvalue = xentry->valuestring;
+            }
+            if (xkey == NULL || xvalue == NULL) {
+                continue;
+            }
+            uint32_t xkey_len = strlen(xkey);
+            uint32_t xvalue_len = strlen(xvalue);
+            uint32_t plen = xkey_len + xvalue_len + 1;
+            plen = ntohl(plen);
+            memcpy(ptr, &plen, sizeof(plen));
+            ptr += sizeof(uint32_t);
+            memcpy(ptr, xkey, xkey_len);
+            ptr += xkey_len;
+            *ptr = '\0';
+            ptr++;
+            memcpy(ptr, xvalue, xvalue_len);
+            ptr += xvalue_len;
+        }
+        cmd.xattrs_len = ptr - buf;
+        cmd.xattrs = buf;
+        cmd.datatype |= PROTOCOL_BINARY_DATATYPE_XATTR;
+    }
+#if 0
+    cmd.options = 0;
+    cmd.meta_len = 0;
+    cmd.meta = NULL;
+#endif
+    ldcp_set_with_meta(client, &cmd, NULL);
+    if (cmd.xattrs) {
+        free((void *)cmd.xattrs);
+    }
+    cJSON_Delete(meta_json);
+    git_blob_free(blob);
+}
+
+static void load_history_from_repo()
+{
+    int rc, success = 0;
+    git_repository *repo;
+
+    rc = git_libgit2_init();
+    if (rc < 0) {
+        ldcp_log(LOGARGS(ERROR), "Failed to initialize libgit2. rc=%d", rc);
+        exit(1);
+    }
+    git_repository_init_options initopts = GIT_REPOSITORY_INIT_OPTIONS_INIT;
+    initopts.flags = GIT_REPOSITORY_INIT_MKPATH | GIT_REPOSITORY_INIT_BARE;
+    rc = git_repository_init_ext(&repo, repo_path, &initopts);
+    if (rc != GIT_OK) {
+        ldcp_log(LOGARGS(ERROR), "Failed to initialize git repository. rc=%d", rc);
+        exit(1);
+    }
+    ldcp_log(LOGARGS(INFO), "Using git repo at \"%s\"", git_repository_path(repo));
+
+    git_branch_iterator *iter;
+    rc = git_branch_iterator_new(&iter, repo, GIT_BRANCH_LOCAL);
+    if (rc != GIT_OK) {
+        ldcp_log(LOGARGS(ERROR), "Failed to create branch iterator. rc=%d", rc);
+        exit(1);
+    }
+
+    git_reference *ref;
+    git_branch_t type;
+    while (1) {
+        rc = git_branch_next(&ref, &type, iter);
+        if (rc == GIT_ITEROVER) {
+            break;
+        } else if (rc == GIT_OK) {
+            const char *name = git_reference_name(ref);
+            if (strncmp(name, "refs/heads/p", sizeof("refs/heads/p") - 1) == 0) {
+                tree_walk_payload payload = {0};
+                payload.repo = repo;
+                payload.partition = (uint16_t)strtoul(name + sizeof("refs/heads/p") - 1, NULL, 10);
+
+                git_commit *commit;
+                rc = git_commit_lookup(&commit, repo, git_reference_target(ref));
+                if (rc != GIT_OK) {
+                    ldcp_log(LOGARGS(ERROR), "Failed to lookup top commit for partition (%d), rc=%d",
+                             (int)payload.partition, (int)rc);
+                    exit(1);
+                }
+
+                const char *commit_msg = git_commit_summary(commit);
+                const char *commit_msg_end = commit_msg + strlen(commit_msg);
+                char *ptr;
+                ptr = strstr(commit_msg, "u:");
+                if (ptr == NULL || ptr + 2 >= commit_msg_end) {
+                    exit(1);
+                }
+                payload.partition_uuid = strtoull(ptr + 2, NULL, 10);
+
+                git_tree *tree;
+                rc = git_commit_tree(&tree, commit);
+                git_commit_free(commit);
+                if (rc != GIT_OK) {
+                    ldcp_log(LOGARGS(ERROR), "Failed to get commit tree for partition (%d), rc=%d",
+                             (int)payload.partition, (int)rc);
+                    exit(1);
+                }
+
+                git_tree_walk(tree, GIT_TREEWALK_PRE, tree_walk_callback, &payload);
+
+                git_tree_free(tree);
+            }
+        } else {
+            ldcp_log(LOGARGS(ERROR), "Failed to iterate branches. rc=%d", rc);
+            exit(1);
+        }
+    }
+
+    git_branch_iterator_free(iter);
+    git_libgit2_shutdown();
 }
 
 static void bootstrap_callback(ldcp_CLIENT *client)
 {
-    ldcp_SET_WITH_META cmd = {0};
-    cmd.flags = 0;
-    cmd.expiration = 0;
-    cmd.rev_seqno = 0;
-    cmd.cas = 0;
-    cmd.options = 0;
-    cmd.meta_len = 0;
-    cmd.meta = NULL;
-    cmd.key_len = 0;
-    cmd.key = NULL;
-    cmd.xattrs_len = 0;
-    cmd.xattrs = NULL;
-    cmd.value_len = 0;
-    cmd.value = NULL;
-    ldcp_set_with_meta(client, &cmd, NULL);
     ldcp_install_config_callback(client, NULL);
+    load_history_from_repo();
 }
 
 static void set_with_meta_callback(ldcp_CLIENT *client, ldcp_RESP_CALLBACK type, const ldcp_RESP *resp)
 {
+    fprintf(stderr, "status: %d\n", resp->status);
     (void)client;
     (void)type;
-    (void)resp;
 }
 
 int main(int argc, char *argv[])
@@ -149,7 +347,6 @@ int main(int argc, char *argv[])
     if (argc > 5) {
         options->password = argv[5];
     }
-    char *repo_path = NULL;
 
     if (argc > 6) {
         repo_path = argv[6];
@@ -171,85 +368,6 @@ int main(int argc, char *argv[])
 
     ldcp_log(LOGARGS(INFO), "Running");
     ldcp_client_dispatch(client);
-
-#ifdef 0
-    {
-        int rc, success = 0;
-        git_repository *repo;
-
-        rc = git_libgit2_init();
-        if (rc < 0) {
-            ldcp_log(LOGARGS(ERROR), "Failed to initialize libgit2. rc=%d", rc);
-            exit(1);
-        }
-        git_repository_init_options initopts = GIT_REPOSITORY_INIT_OPTIONS_INIT;
-        initopts.flags = GIT_REPOSITORY_INIT_MKPATH | GIT_REPOSITORY_INIT_BARE;
-        rc = git_repository_init_ext(&repo, repo_path, &initopts);
-        if (rc != GIT_OK) {
-            ldcp_log(LOGARGS(ERROR), "Failed to initialize git repository. rc=%d", rc);
-            exit(1);
-        }
-        ldcp_log(LOGARGS(INFO), "Using git repo at \"%s\"", git_repository_path(repo));
-
-        git_branch_iterator *iter;
-        rc = git_branch_iterator_new(&iter, repo, GIT_BRANCH_LOCAL);
-        if (rc != GIT_OK) {
-            ldcp_log(LOGARGS(ERROR), "Failed to create branch iterator. rc=%d", rc);
-            exit(1);
-        }
-
-        git_reference *ref;
-        git_branch_t type;
-        while (1) {
-            rc = git_branch_next(&ref, &type, iter);
-            if (rc == GIT_ITEROVER) {
-                break;
-            } else if (rc == GIT_OK) {
-                const char *name = git_reference_name(ref);
-                if (strncmp(name, "refs/heads/p", sizeof("refs/heads/p") - 1) == 0) {
-                    uint16_t partition = (uint16_t)strtoul(name + sizeof("refs/heads/p") - 1, NULL, 10);
-
-                    git_commit *commit;
-                    rc = git_commit_lookup(&commit, repo, git_reference_target(ref));
-                    if (rc != GIT_OK) {
-                        ldcp_log(LOGARGS(ERROR), "Failed to lookup top commit for partition (%d), rc=%d",
-                                 (int)partition, (int)rc);
-                        exit(1);
-                    }
-
-                    const char *commit_msg = git_commit_summary(commit);
-                    const char *commit_msg_end = commit_msg + strlen(commit_msg);
-                    char *ptr;
-                    ptr = strstr(commit_msg, "u:");
-                    if (ptr == NULL || ptr + 2 >= commit_msg_end) {
-                        exit(1);
-                    }
-                    uint64_t partition_uuid = strtoull(ptr + 2, NULL, 10);
-
-                    printf("branch: %s, partition: %d, uuid: %" PRIu64 "\n", name, partition, partition_uuid);
-
-                    git_tree *tree;
-                    rc = git_commit_tree(&tree, commit);
-                    git_commit_free(commit);
-                    if (rc != GIT_OK) {
-                        ldcp_log(LOGARGS(ERROR), "Failed to get commit tree for partition (%d), rc=%d", (int)partition,
-                                 (int)rc);
-                        exit(1);
-                    }
-
-                    git_tree_walk(tree, GIT_TREEWALK_PRE, tree_walk_callback, NULL);
-
-                    git_tree_free(tree);
-                }
-            } else {
-                ldcp_log(LOGARGS(ERROR), "Failed to iterate branches. rc=%d", rc);
-                exit(1);
-            }
-        }
-
-        git_branch_iterator_free(iter);
-    }
-#endif
 
     ldcp_log(LOGARGS(INFO), "Exiting");
 

@@ -113,6 +113,7 @@ typedef enum {
 typedef struct ldcp_CMD_SETWITHMETA {
     LDCP_CMD_BASE
     void *cookie;
+    uint8_t datatype;
     uint32_t flags;
     uint32_t expiration;
     uint64_t rev_seqno;
@@ -125,12 +126,13 @@ typedef struct ldcp_CMD_SETWITHMETA {
     */
 
     uint32_t options;
+    const void *meta;
     uint16_t meta_len;
-    void *key;
+    const void *key;
     uint32_t key_len;
-    void *xattrs; /**< properly encoded XATTRs, might be changed in future */
+    const void *xattrs; /**< properly encoded XATTRs, might be changed in future */
     uint32_t xattrs_len;
-    void *value;
+    const void *value;
     uint32_t value_len;
 } ldcp_CMD_SETWITHMETA;
 

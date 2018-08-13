@@ -281,7 +281,7 @@ static void state_commit_snapshot(recv_STATE *state, recv_SNAPSHOT *snap)
     }
 }
 
-static void mutation_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldcp_EVENT *evt)
+static void mutation_callback(ldcp_CLIENT *client, ldcp_EVENT_CALLBACK type, const ldcp_EVENT *evt)
 {
     ldcp_MUTATION *mut = (ldcp_MUTATION *)evt;
     recv_STATE *state = (recv_STATE *)client->cookie;
@@ -373,7 +373,7 @@ static void mutation_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldc
     (void)type;
 }
 
-static void deletion_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldcp_EVENT *evt)
+static void deletion_callback(ldcp_CLIENT *client, ldcp_EVENT_CALLBACK type, const ldcp_EVENT *evt)
 {
     ldcp_DELETION *del = (ldcp_DELETION *)evt;
     recv_STATE *state = (recv_STATE *)client->cookie;
@@ -493,7 +493,7 @@ static git_reference *get_partition_branch(recv_STATE *state, uint16_t partition
     return peeled;
 }
 
-static void snapshot_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldcp_EVENT *evt)
+static void snapshot_callback(ldcp_CLIENT *client, ldcp_EVENT_CALLBACK type, const ldcp_EVENT *evt)
 {
     ldcp_SNAPSHOT *msg = (ldcp_SNAPSHOT *)evt;
     recv_STATE *state = (recv_STATE *)client->cookie;
@@ -562,7 +562,7 @@ static void snapshot_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldc
     (void)type;
 }
 
-static void start_stream_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldcp_EVENT *evt)
+static void start_stream_callback(ldcp_CLIENT *client, ldcp_EVENT_CALLBACK type, const ldcp_EVENT *evt)
 {
     ldcp_START_STREAM *msg = (ldcp_START_STREAM *)evt;
     git_reference *ref = NULL;

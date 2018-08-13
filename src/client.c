@@ -120,7 +120,7 @@ ldcp_CFGCALLBACK ldcp_install_config_callback(ldcp_CLIENT *client, ldcp_CFGCALLB
 LDCP_INTERNAL_API
 ldcp_EVTCALLBACK ldcp_install_event_callback(ldcp_CLIENT *client, ldcp_EVENT_CALLBACK type, ldcp_EVTCALLBACK cb)
 {
-    if (type >= LDCP_CALLBACK__MAX || type < 0) {
+    if (type >= LDCP_EVENT__MAX || type < 0) {
         return NULL;
     }
     ldcp_EVTCALLBACK old = client->on_event[type];
@@ -137,13 +137,62 @@ ldcp_EVTCALLBACK ldcp_install_event_callback(ldcp_CLIENT *client, ldcp_EVENT_CAL
 LDCP_INTERNAL_API
 ldcp_STATUS ldcp_set_with_meta(ldcp_CLIENT *client, ldcp_CMD_SETWITHMETA *cmd, void *opaque)
 {
+    protocol_binary_request_set_with_meta frame = {0};
+
+    if (client->config == NULL || client->config->partitions == NULL || client->config->npartitions < cmd->partition) {
+        return LDCP_BADARG;
+    }
+    int chan_idx = client->config->partitions[cmd->partition].master;
+    if (chan_idx < 0 || chan_idx > client->nchannels) {
+        return LDCP_BADARG;
+    }
+    ldcp_CHANNEL *chan = client->channels[chan_idx];
+
+    frame.message.header.request.vbucket = htons(cmd->partition); /* FIXME: regenerate vbucket number */
+    frame.message.header.request.magic = PROTOCOL_BINARY_REQ;
+    frame.message.header.request.opcode = PROTOCOL_BINARY_CMD_SET_WITH_META;
+    if (cmd->datatype & PROTOCOL_BINARY_DATATYPE_XATTR) {
+        /* TODO: send XATTRS separately */
+        cmd->datatype &= ~PROTOCOL_BINARY_DATATYPE_XATTR;
+    }
+    frame.message.header.request.datatype = cmd->datatype;
+    frame.message.header.request.extlen = 24;
+    frame.message.header.request.keylen = htons(cmd->key_len);
+    frame.message.body.flags = htonl(cmd->flags);
+    frame.message.body.expiration = htonl(cmd->expiration);
+    frame.message.body.seqno = ldcp_htonll(cmd->rev_seqno);
+    frame.message.body.cas = ldcp_htonll(cmd->cas);
+    if (cmd->meta_len) {
+        frame.message.header.request.extlen += 2;
+    }
+    if (cmd->options) {
+        frame.message.header.request.extlen += 4;
+    }
+    frame.message.header.request.bodylen =
+        htonl(frame.message.header.request.extlen + cmd->key_len + cmd->value_len + cmd->meta_len);
+    ldcp_rb_ensure_capacity(&chan->out, ntohl(frame.message.header.request.bodylen));
+    ldcp_rb_write(&chan->out, frame.bytes, sizeof(frame.bytes));
+    if (cmd->meta_len) {
+        uint16_t val = htons(cmd->meta_len);
+        ldcp_rb_write(&chan->out, &val, sizeof(val));
+    }
+    if (cmd->options) {
+        uint32_t val = htons(cmd->options);
+        ldcp_rb_write(&chan->out, &val, sizeof(val));
+    }
+    ldcp_rb_write(&chan->out, cmd->key, cmd->key_len);
+    ldcp_rb_write(&chan->out, cmd->value, cmd->value_len);
+    if (cmd->meta_len) {
+        ldcp_rb_write(&chan->out, cmd->meta, cmd->meta_len);
+    }
+    ldcp_channel_schedule_write(chan);
     return LDCP_OK;
 }
 
 LDCP_INTERNAL_API
 ldcp_RESPCALLBACK ldcp_install_resp_callback(ldcp_CLIENT *client, ldcp_RESP_CALLBACK type, ldcp_RESPCALLBACK cb)
 {
-    if (type >= LDCP_RESP_CALLBACK__MAX || type < 0) {
+    if (type >= LDCP_RESP__MAX || type < 0) {
         return NULL;
     }
     ldcp_RESPCALLBACK old = client->on_resp[type];
