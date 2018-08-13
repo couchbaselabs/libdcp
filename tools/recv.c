@@ -294,71 +294,47 @@ static void mutation_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldc
     }
 
     ldcp_rb_reset(&snap->buf);
-
-    char tag[50] = {0};
-
-    ldcp_rb_ensure_capacity(&snap->buf, sizeof(tag) * 8);
-
-    snprintf(tag, sizeof(tag), "partition: %" PRIu16 "\n", mut->partition);
-    ldcp_rb_strcat(&snap->buf, tag);
-
-    snprintf(tag, sizeof(tag), "cas: %" PRIu64 "\n", mut->cas);
-    ldcp_rb_strcat(&snap->buf, tag);
-
-    snprintf(tag, sizeof(tag), "datatype: %" PRIu8 "\n", mut->datatype);
-    ldcp_rb_strcat(&snap->buf, tag);
-
-    snprintf(tag, sizeof(tag), "flags: %" PRIu32 "\n", mut->flags);
-    ldcp_rb_strcat(&snap->buf, tag);
-
-    snprintf(tag, sizeof(tag), "expiration: %" PRIu32 "\n", mut->expiration);
-    ldcp_rb_strcat(&snap->buf, tag);
-
-    snprintf(tag, sizeof(tag), "lock_time: %" PRIu32 "\n", mut->lock_time);
-    ldcp_rb_strcat(&snap->buf, tag);
-
-    snprintf(tag, sizeof(tag), "by_seqno: %" PRIu64 "\n", mut->by_seqno);
-    ldcp_rb_strcat(&snap->buf, tag);
-
-    snprintf(tag, sizeof(tag), "rev_seqno: %" PRIu64 "\n", mut->rev_seqno);
-    ldcp_rb_strcat(&snap->buf, tag);
-
-    ldcp_rb_ensure_capacity(&snap->buf, mut->key_len + sizeof(tag) + 1);
-    snprintf(tag, sizeof(tag), "key(%d): ", mut->key_len);
-    ldcp_rb_strcat(&snap->buf, tag);
-    ldcp_rb_write(&snap->buf, mut->key, mut->key_len);
-    ldcp_rb_strcat(&snap->buf, "\n");
-
-    if (mut->datatype & PROTOCOL_BINARY_DATATYPE_XATTR) {
-        ldcp_rb_ensure_capacity(&snap->buf, sizeof(tag));
-        snprintf(tag, sizeof(tag), "xattrs_num: %" PRIu32 "\n", mut->xattrs_num);
-        ldcp_rb_strcat(&snap->buf, tag);
-        uint32_t idx;
-        char *ptr = mut->xattrs;
-        for (idx = 0; idx < mut->xattrs_num; idx++) {
-            uint32_t plen;
-            memcpy(&plen, ptr, sizeof(plen));
-            plen = ntohl(plen);
-            ptr += sizeof(uint32_t);
-            uint32_t klen = strlen(ptr);
-            uint32_t vlen = plen - klen - 1;
-            ldcp_rb_ensure_capacity(&snap->buf, klen + sizeof(tag) + 1);
-            snprintf(tag, sizeof(tag), "xattr_key(%d): ", klen);
-            ldcp_rb_strcat(&snap->buf, tag);
-            ldcp_rb_write(&snap->buf, ptr, klen);
-            ldcp_rb_strcat(&snap->buf, "\n");
-            ptr += klen + 1;
-            ldcp_rb_ensure_capacity(&snap->buf, vlen + sizeof(tag) + 1);
-            snprintf(tag, sizeof(tag), "xattr_value(%d)\n", vlen);
-            ldcp_rb_strcat(&snap->buf, tag);
-            ldcp_rb_write(&snap->buf, ptr, vlen);
-            ldcp_rb_strcat(&snap->buf, "\n");
-            ptr += vlen;
+    {
+        cJSON *meta = cJSON_CreateObject();
+        cJSON_AddItemToObject(meta, "partition", cJSON_CreateNumber(mut->partition));
+        cJSON_AddItemToObject(meta, "cas", cJSON_CreateNumber(mut->cas));
+        cJSON_AddItemToObject(meta, "datatype", cJSON_CreateNumber(mut->datatype));
+        cJSON_AddItemToObject(meta, "flags", cJSON_CreateNumber(mut->flags));
+        cJSON_AddItemToObject(meta, "expiration", cJSON_CreateNumber(mut->expiration));
+        cJSON_AddItemToObject(meta, "lock_time", cJSON_CreateNumber(mut->lock_time));
+        cJSON_AddItemToObject(meta, "by_seqno", cJSON_CreateNumber(mut->by_seqno));
+        cJSON_AddItemToObject(meta, "rev_seqno", cJSON_CreateNumber(mut->rev_seqno));
+        cJSON_AddItemToObject(meta, "key", cJSON_CreateStringLen(mut->key, mut->key_len));
+        if (mut->datatype & PROTOCOL_BINARY_DATATYPE_XATTR) {
+            cJSON *xattrs = cJSON_CreateArray();
+            uint32_t idx;
+            char *ptr = mut->xattrs;
+            for (idx = 0; idx < mut->xattrs_num; idx++) {
+                cJSON *pair = cJSON_CreateArray();
+                uint32_t plen;
+                memcpy(&plen, ptr, sizeof(plen));
+                plen = ntohl(plen);
+                ptr += sizeof(uint32_t);
+                uint32_t klen = strlen(ptr);
+                uint32_t vlen = plen - klen - 1;
+                cJSON_AddItemToArray(pair, cJSON_CreateStringLen(ptr, klen));
+                ptr += klen + 1;
+                cJSON_AddItemToArray(pair, cJSON_CreateStringLen(ptr, vlen));
+                ptr += vlen;
+                cJSON_AddItemToArray(xattrs, pair);
+            }
+            cJSON_AddItemToObject(meta, "xattrs", xattrs);
         }
+        char *meta_str = cJSON_PrintUnformatted(meta);
+        cJSON_Delete(meta);
+        ldcp_rb_write(&snap->buf, meta_str, strlen(meta_str));
+        free(meta_str);
+        ldcp_rb_strcat(&snap->buf, "\n");
     }
 
+    char tag[50] = {0};
     ldcp_rb_ensure_capacity(&snap->buf, mut->value_len + sizeof(tag) + 1);
-    snprintf(tag, sizeof(tag), "value(%d)\n", mut->value_len);
+    snprintf(tag, sizeof(tag), "%d\n", mut->value_len);
     ldcp_rb_strcat(&snap->buf, tag);
     ldcp_rb_write(&snap->buf, mut->value, mut->value_len);
     ldcp_rb_strcat(&snap->buf, "\n");
@@ -410,28 +386,19 @@ static void deletion_callback(ldcp_CLIENT *client, ldcp_CALLBACK type, const ldc
     }
 
     ldcp_rb_reset(&snap->buf);
-
-    char tag[50] = {0};
-
-    ldcp_rb_ensure_capacity(&snap->buf, sizeof(tag) * 8);
-
-    snprintf(tag, sizeof(tag), "partition: %" PRIu16 "\n", del->partition);
-    ldcp_rb_strcat(&snap->buf, tag);
-
-    snprintf(tag, sizeof(tag), "cas: %" PRIu64 "\n", del->cas);
-    ldcp_rb_strcat(&snap->buf, tag);
-
-    snprintf(tag, sizeof(tag), "by_seqno: %" PRIu64 "\n", del->by_seqno);
-    ldcp_rb_strcat(&snap->buf, tag);
-
-    snprintf(tag, sizeof(tag), "rev_seqno: %" PRIu64 "\n", del->rev_seqno);
-    ldcp_rb_strcat(&snap->buf, tag);
-
-    ldcp_rb_ensure_capacity(&snap->buf, del->key_len + sizeof(tag) + 1);
-    snprintf(tag, sizeof(tag), "key(%d): ", del->key_len);
-    ldcp_rb_strcat(&snap->buf, tag);
-    ldcp_rb_write(&snap->buf, del->key, del->key_len);
-    ldcp_rb_strcat(&snap->buf, "\n");
+    {
+        cJSON *meta = cJSON_CreateObject();
+        cJSON_AddItemToObject(meta, "partition", cJSON_CreateNumber(del->partition));
+        cJSON_AddItemToObject(meta, "cas", cJSON_CreateNumber(del->cas));
+        cJSON_AddItemToObject(meta, "by_seqno", cJSON_CreateNumber(del->by_seqno));
+        cJSON_AddItemToObject(meta, "rev_seqno", cJSON_CreateNumber(del->rev_seqno));
+        cJSON_AddItemToObject(meta, "key", cJSON_CreateStringLen(del->key, del->key_len));
+        char *meta_str = cJSON_PrintUnformatted(meta);
+        cJSON_Delete(meta);
+        ldcp_rb_write(&snap->buf, meta_str, strlen(meta_str));
+        free(meta_str);
+        ldcp_rb_strcat(&snap->buf, "\n");
+    }
 
     size_t data_len = ldcp_rb_get_nbytes(&snap->buf);
     char *data = malloc(data_len);

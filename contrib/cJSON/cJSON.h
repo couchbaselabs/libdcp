@@ -72,7 +72,7 @@ typedef struct cJSON {
         int type; /* The type of the item, as above. */
 
         char *valuestring; /* The item's string, if type==cJSON_String */
-        int valueint; /* The item's number, if type==cJSON_Number */
+        long long int valueint; /* The item's number, if type==cJSON_Number */
         double valuedouble; /* The item's number, if type==cJSON_Number */
 
         char *string; /* The item's name string, if this item is the
@@ -117,6 +117,7 @@ extern cJSON *cJSON_CreateTrue(void);
 extern cJSON *cJSON_CreateFalse(void);
 extern cJSON *cJSON_CreateNumber(double num);
 extern cJSON *cJSON_CreateString(const char *string);
+extern cJSON *cJSON_CreateStringLen(const char *string, size_t len);
 extern cJSON *cJSON_CreateArray(void);
 extern cJSON *cJSON_CreateObject(void);
 

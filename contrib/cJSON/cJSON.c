@@ -60,6 +60,17 @@ static char *cJSON_strdup(const char *str)
     return copy;
 }
 
+static char *cJSON_strndup(const char *str, size_t len)
+{
+    char *copy;
+
+    if (!(copy = (char *)cJSON_malloc(len + 1)))
+        return 0;
+    memcpy(copy, str, len);
+    copy[len] = '\0';
+    return copy;
+}
+
 void cJSON_InitHooks(cJSON_Hooks *hooks)
 {
     if (!hooks) { /* Reset hooks */
@@ -254,7 +265,7 @@ static const char *parse_number(cJSON *item, const char *num)
     n = sign * n * pow(10.0, (scale + subscale * signsubscale)); /* number = +/- number.fraction * 10^+/- exponent */
 
     item->valuedouble = n;
-    item->valueint = (int)n;
+    item->valueint = (long long int)n;
     item->type = cJSON_Number;
     return num;
 }
@@ -266,7 +277,7 @@ static char *print_number(cJSON *item)
     double d = item->valuedouble;
     if (fabs(((double)item->valueint) - d) <= DBL_EPSILON && d <= INT_MAX && d >= INT_MIN) {
         str = (char *)cJSON_malloc(21); /* 2^64+1 can be represented in 21 chars. */
-        sprintf(str, "%d", item->valueint);
+        sprintf(str, "%lld", (long long int)item->valueint);
     } else {
         str = (char *)cJSON_malloc(64); /* This is a nice tradeoff. */
         if (fabs(floor(d) - d) <= DBL_EPSILON)
@@ -940,7 +951,7 @@ cJSON *cJSON_CreateNumber(double num)
     cJSON *item = cJSON_New_Item(0);
     item->type = cJSON_Number;
     item->valuedouble = num;
-    item->valueint = (int)num;
+    item->valueint = (long long int)num;
     return item;
 }
 cJSON *cJSON_CreateString(const char *string)
@@ -948,6 +959,13 @@ cJSON *cJSON_CreateString(const char *string)
     cJSON *item = cJSON_New_Item(0);
     item->type = cJSON_String;
     item->valuestring = cJSON_strdup(string);
+    return item;
+}
+cJSON *cJSON_CreateStringLen(const char *string, size_t len)
+{
+    cJSON *item = cJSON_New_Item(0);
+    item->type = cJSON_String;
+    item->valuestring = cJSON_strndup(string, len);
     return item;
 }
 cJSON *cJSON_CreateArray()
